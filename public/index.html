@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f0f23">
+  <meta name="description" content="英语小猎人 Word Hunter — 666 关的英语单词学习游戏，适合 3 岁到雅思 8 分。">
+  <title>英语小猎人 · Word Hunter</title>
+  <link rel="stylesheet" href="css/game.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Google Fonts: load as print stylesheet first then swap to all.
+       This keeps the page from being blocked by a slow/unreachable
+       fonts.googleapis.com — on offline the page still renders with
+       the system fallback fonts. -->
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Bangers&family=Press+Start+2P&family=Nunito:wght=700;800;900&display=swap"
+        media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&family=Press+Start+2P&family=Nunito:wght=700;800;900&display=swap"></noscript>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+</head>
+<body>
+  <!-- ==================== GAME SHELL ==================== -->
+  <div id="game-root">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- HUD overlay (in-game) -->
+    <div id="hud" class="hud hidden" role="status" aria-live="polite" aria-label="游戏状态栏">
+      <div class="hud-top">
+        <div class="hud-hp" id="hud-hp" aria-label="生命值">❤❤❤</div>
+        <div class="hud-score">
+          <span class="hud-label">SCORE</span>
+          <span id="hud-score" aria-label="当前分数">0</span>
+        </div>
+        <div class="hud-level" id="hud-level" aria-label="当前关卡">Lv.1</div>
+      </div>
+      <div class="hud-progress">
+        <div class="hud-target">
+          <span class="hud-label">目标</span>
+          <span id="hud-target" aria-label="已捕获小怪数">0/5</span>
+        </div>
+        <div class="hud-time">
+          <span class="hud-label">⏱</span>
+          <span id="hud-time" aria-label="剩余时间秒数">60</span>
+        </div>
+        <div class="hud-combo hidden" id="hud-combo">COMBO x0</div>
+      </div>
+    </div>
+
+    <!-- Question modal (paused while visible) -->
+    <div id="question-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-word" aria-describedby="modal-prompt">
+      <div class="modal-card">
+        <div class="modal-monster" id="modal-monster" aria-hidden="true">👾</div>
+        <div class="modal-word" id="modal-word">—</div>
+        <div class="modal-prompt" id="modal-prompt">选出正确的中文意思</div>
+        <div class="modal-options" id="modal-options" role="listbox" aria-label="答案选项"></div>
+        <div class="modal-feedback" id="modal-feedback" role="status" aria-live="assertive"></div>
+      </div>
+    </div>
+
+    <!-- Title screen -->
+    <div id="screen-title" class="screen screen--title">
+      <div class="title-bg" aria-hidden="true">
+        <div class="title-bg__clouds"></div>
+        <div class="title-bg__ground"></div>
+        <div class="title-bg__monster title-bg__monster--1">👹</div>
+        <div class="title-bg__monster title-bg__monster--2">👻</div>
+        <div class="title-bg__monster title-bg__monster--3">💀</div>
+        <div class="title-bg__coin">🪙</div>
+        <div class="title-bg__coin">💎</div>
+        <div class="title-bg__coin">⭐</div>
+      </div>
+      <div class="title-content">
+        <div class="title-banner">
+          <span class="title-banner__decoration">⚔️</span>
+          <div class="title-banner__inner">
+            <div class="title-emoji">🎮</div>
+            <h1 class="game-title">
+              <span class="title-text">英语小猎人</span>
+              <span class="title-sub">WORD&nbsp;HUNTER</span>
+            </h1>
+            <p class="tagline">踏上 666 关魔法大陆，从 3 岁到雅思 8 分，用单词击败小怪成为传奇猎人！</p>
+          </div>
+          <span class="title-banner__decoration">🛡️</span>
+        </div>
+
+        <div class="title-stats">
+          <div class="title-stats__item">
+            <span class="title-stats__num">666</span>
+            <span class="title-stats__label">关卡</span>
+          </div>
+          <div class="title-stats__divider"></div>
+          <div class="title-stats__item">
+            <span class="title-stats__num">6</span>
+            <span class="title-stats__label">世界</span>
+          </div>
+          <div class="title-stats__divider"></div>
+          <div class="title-stats__item">
+            <span class="title-stats__num">4</span>
+            <span class="title-stats__label">技能</span>
+          </div>
+          <div class="title-stats__divider"></div>
+          <div class="title-stats__item">
+            <span class="title-stats__num">3+</span>
+            <span class="title-stats__label">年龄</span>
+          </div>
+        </div>
+
+        <form class="title-form" autocomplete="off" onsubmit="return false">
+          <label class="title-field">
+            <span class="title-field__icon" aria-hidden="true">🪪</span>
+            <input type="text" id="player-name" class="name-input" placeholder="输入你的猎人代号" maxlength="10" autocomplete="off" spellcheck="false" aria-label="玩家昵称" required>
+          </label>
+
+          <div class="age-select">
+            <div class="age-label">
+              <span class="age-label__icon">🎯</span>
+              <span>选择你的等级</span>
+            </div>
+            <div class="age-buttons">
+              <button class="age-btn" data-age="3" type="button" aria-label="3-4 岁 启蒙">
+                <span class="age-btn__emoji" aria-hidden="true">🧒</span>
+                <span class="age-btn__num">3-4</span>
+                <span class="age-btn__label">启蒙</span>
+              </button>
+              <button class="age-btn" data-age="5" type="button" aria-label="5-6 岁 入门">
+                <span class="age-btn__emoji" aria-hidden="true">👦</span>
+                <span class="age-btn__num">5-6</span>
+                <span class="age-btn__label">入门</span>
+              </button>
+              <button class="age-btn selected" data-age="7" type="button" aria-label="7-8 岁 基础">
+                <span class="age-btn__emoji" aria-hidden="true">🧑</span>
+                <span class="age-btn__num">7-8</span>
+                <span class="age-btn__label">基础</span>
+              </button>
+              <button class="age-btn" data-age="9" type="button" aria-label="9-10 岁 进阶">
+                <span class="age-btn__emoji" aria-hidden="true">👨</span>
+                <span class="age-btn__num">9-10</span>
+                <span class="age-btn__label">进阶</span>
+              </button>
+              <button class="age-btn" data-age="12" type="button" aria-label="11 岁以上 高手">
+                <span class="age-btn__emoji" aria-hidden="true">🧙</span>
+                <span class="age-btn__num">11+</span>
+                <span class="age-btn__label">高手</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="auth-buttons">
+            <button id="btn-show-login" class="big-btn login-btn" type="button" aria-label="登录">
+              <span class="btn-emoji" aria-hidden="true">🔑</span>
+              <span id="btn-show-login-text">登录</span>
+            </button>
+            <button id="btn-show-register" class="big-btn register-btn" type="button" aria-label="注册账号">
+              <span class="btn-emoji" aria-hidden="true">📝</span>
+              <span>注册</span>
+            </button>
+            <button id="btn-logout" class="big-btn logout-btn hidden" type="button" aria-label="退出登录">
+              <span class="btn-emoji" aria-hidden="true">🚪</span>
+              <span>退出</span>
+            </button>
+          </div>
+
+          <button id="btn-start" class="big-btn start-btn" type="button" disabled aria-label="开始狩猎">
+            <span class="btn-emoji" aria-hidden="true">⚔️</span>
+            <span>开始狩猎</span>
+            <span class="btn-shine" aria-hidden="true"></span>
+          </button>
+
+          <div class="save-info" id="save-info"></div>
+          <div class="user-status hidden" id="user-status" role="status" aria-live="polite"></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Registration Modal -->
+    <div id="register-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="register-title">
+      <div class="modal-card modal-card--auth">
+        <div class="modal-header">
+          <h2 id="register-title">📝 注册新账号</h2>
+          <button class="close-modal-btn" aria-label="关闭">✕</button>
+        </div>
+        <form id="register-form" autocomplete="off">
+          <div class="form-group">
+            <label for="register-nickname">🪪 昵称</label>
+            <input type="text" id="register-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="10" minlength="1" pattern="[A-Za-z0-9_\-\u4e00-\u9fa5]{1,12}" required>
+          </div>
+          <div class="form-group">
+            <label for="register-password">🔒 密码</label>
+            <input type="password" id="register-password" name="password" class="form-input" placeholder="至少6位密码" minlength="6" maxlength="64" required>
+          </div>
+          <div class="form-group">
+            <label for="register-confirm-password">🔒 确认密码</label>
+            <input type="password" id="register-confirm-password" name="confirmPassword" class="form-input" placeholder="再次输入密码" minlength="6" maxlength="64" required>
+          </div>
+          <div class="form-group">
+            <label>🎯 选择年龄</label>
+            <div class="age-buttons age-buttons--modal">
+              <button class="age-btn" data-age="3" type="button" aria-label="3-4 岁 启蒙">
+                <span class="age-btn__emoji" aria-hidden="true">🧒</span>
+                <span class="age-btn__num">3-4</span>
+                <span class="age-btn__label">启蒙</span>
+              </button>
+              <button class="age-btn" data-age="5" type="button" aria-label="5-6 岁 入门">
+                <span class="age-btn__emoji" aria-hidden="true">👦</span>
+                <span class="age-btn__num">5-6</span>
+                <span class="age-btn__label">入门</span>
+              </button>
+              <button class="age-btn" data-age="7" type="button" aria-label="7-8 岁 基础">
+                <span class="age-btn__emoji" aria-hidden="true">🧑</span>
+                <span class="age-btn__num">7-8</span>
+                <span class="age-btn__label">基础</span>
+              </button>
+              <button class="age-btn" data-age="9" type="button" aria-label="9-10 岁 进阶">
+                <span class="age-btn__emoji" aria-hidden="true">👨</span>
+                <span class="age-btn__num">9-10</span>
+                <span class="age-btn__label">进阶</span>
+              </button>
+              <button class="age-btn" data-age="12" type="button" aria-label="11 岁以上 高手">
+                <span class="age-btn__emoji" aria-hidden="true">🧙</span>
+                <span class="age-btn__num">11+</span>
+                <span class="age-btn__label">高手</span>
+              </button>
+            </div>
+          </div>
+          <button type="submit" class="big-btn submit-btn">注册账号</button>
+          <div class="form-foot">
+            已有账号？<a href="#" id="link-to-login" class="form-link">直接登录</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div class="modal-card modal-card--auth">
+        <div class="modal-header">
+          <h2 id="login-title">🔑 猎人登录</h2>
+          <button class="close-modal-btn" aria-label="关闭">✕</button>
+        </div>
+        <form id="login-form" autocomplete="off">
+          <div class="form-group">
+            <label for="login-nickname">🪪 昵称</label>
+            <input type="text" id="login-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="10" minlength="1" required>
+          </div>
+          <div class="form-group">
+            <label for="login-password">🔒 密码</label>
+            <input type="password" id="login-password" name="password" class="form-input" placeholder="输入密码" maxlength="64" required>
+          </div>
+          <button type="submit" class="big-btn submit-btn">登录</button>
+          <div class="form-foot">
+            还没账号？<a href="#" id="link-to-register" class="form-link">立即注册</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Level intro -->
+    <div id="screen-level-intro" class="screen hidden">
+      <div class="level-intro-card">
+        <div class="level-intro-emoji" id="level-intro-emoji">🌲</div>
+        <div class="level-intro-num" id="level-intro-num">第 1 关</div>
+        <div class="level-intro-name" id="level-intro-name">魔法森林</div>
+        <div class="level-intro-goal" id="level-intro-goal">捕获 5 只小怪</div>
+        <button id="btn-go" class="big-btn go-btn" aria-label="出发开始本关">出发!</button>
+      </div>
+    </div>
+
+    <!-- Level complete -->
+    <div id="screen-win" class="screen hidden">
+      <div class="result-card win">
+        <div class="result-emoji">🏆</div>
+        <h2>关卡完成!</h2>
+        <div class="result-stars" id="result-stars">⭐⭐⭐</div>
+        <div class="result-stats">
+          <div>分数: <span id="result-score">0</span></div>
+          <div>捕获: <span id="result-captured">0</span> 只小怪</div>
+          <div>最高连击: <span id="result-combo">x0</span></div>
+        </div>
+        <div class="result-buttons">
+          <button id="btn-next-level" class="big-btn" aria-label="进入下一关">下一关</button>
+          <button id="btn-replay" class="big-btn ghost" aria-label="重玩本关">重玩</button>
+          <button id="btn-home-win" class="big-btn ghost" aria-label="返回主页">返回主页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Game over -->
+    <div id="screen-lose" class="screen hidden">
+      <div class="result-card lose">
+        <div class="result-emoji">💀</div>
+        <h2>挑战失败</h2>
+        <div class="result-stats">
+          <div>分数: <span id="result-score-lose">0</span></div>
+          <div>捕获: <span id="result-captured-lose">0</span> 只小怪</div>
+        </div>
+        <div class="result-buttons">
+          <button id="btn-retry" class="big-btn" aria-label="再试一次">再试一次</button>
+          <button id="btn-home-lose" class="big-btn ghost" aria-label="返回主页">返回主页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Touch joystick (mobile) -->
+    <div id="joystick" class="joystick hidden" role="group" aria-label="虚拟摇杆控制">
+      <div class="joystick-base">
+        <div class="joystick-knob" id="joystick-knob"></div>
+      </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- Confetti / particles layer -->
+    <canvas id="fx-canvas" class="fx-canvas"></canvas>
+  </div>
+
+  <!-- Scripts are loaded with `defer` so they execute in order after
+       HTML parsing is done, without blocking the initial paint. -->
+  <script src="js/utils.js" defer></script>
+  <script src="js/api.js" defer></script>
+  <script src="js/tts.js" defer></script>
+  <script src="js/levels.js" defer></script>
+  <script src="js/player.js" defer></script>
+  <script src="js/monster.js" defer></script>
+  <script src="js/coin.js" defer></script>
+  <script src="js/world.js" defer></script>
+  <script src="js/question.js" defer></script>
+  <script src="js/particle.js" defer></script>
+  <script src="js/input.js" defer></script>
+  <script src="js/game.js" defer></script>
+  <script src="js/register.js" defer></script>
+  <script src="js/main.js" defer></script>
+</body>
+</html>

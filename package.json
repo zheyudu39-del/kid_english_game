@@ -1,0 +1,19 @@
+{
+  "name": "kid-english-game",
+  "version": "1.0.0",
+  "description": "Kids English Learning Game - web game for ages 3-10",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.4.0"
+  }
+}

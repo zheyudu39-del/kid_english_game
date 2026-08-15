@@ -1,0 +1,14 @@
+const fs = require('fs');
+const data = JSON.parse(fs.readFileSync('data/vocabulary.json', 'utf-8'));
+console.log('=== 词汇库结构 ===');
+console.log('version:', data.version);
+console.log('words count:', data.words.length);
+console.log('sentences count:', (data.sentences || []).length);
+console.log('letters count:', (data.letters || []).length);
+console.log('ageGroups keys:', Object.keys(data.ageGroups || {}));
+console.log('ageGroups:', JSON.stringify(data.ageGroups, null, 2));
+console.log('categories count:', (data.categories || []).length);
+console.log('first 5 categories:', (data.categories || []).slice(0, 5));
+console.log('---');
+console.log('first 3 words:');
+console.log(JSON.stringify(data.words.slice(0, 3), null, 2));

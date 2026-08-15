@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log*
+*.png
+*.jpg
+.DS_Store
+test-output/
+
+# Player + score data contain kid nicknames and progress — never commit them.
+data/players.json
+data/scores.json

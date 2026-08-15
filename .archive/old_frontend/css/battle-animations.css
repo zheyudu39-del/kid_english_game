@@ -1,0 +1,552 @@
+/* ============================================================
+   battle-animations.css - Animated battle scene, projectiles,
+   player & monster reactions, particle FX.
+   ============================================================ */
+
+/* --- Arena layout: player left, monster right --- */
+.keg-arena {
+  position: relative;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 18px;
+  padding: 0 8px 16px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* Screen shake when player is hit (controlled via JS adding class to scene) */
+@keyframes kegScreenShake {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-4px, 2px); }
+  20% { transform: translate(4px, -2px); }
+  30% { transform: translate(-3px, 2px); }
+  40% { transform: translate(3px, -2px); }
+  50% { transform: translate(-2px, 1px); }
+  60% { transform: translate(2px, -1px); }
+}
+.keg-arena--shake {
+  animation: kegScreenShake 0.4s ease;
+}
+.keg-arena__scene {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  height: 230px;
+  padding: 8px 12px 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.0) 0%, rgba(255, 255, 255, 0.25) 100%);
+}
+.keg-arena__bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+/* Subtle ground */
+.keg-arena__scene::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 24px;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.08));
+  border-radius: 0 0 18px 18px;
+}
+
+.keg-arena__player, .keg-arena__monster {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  width: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding-bottom: 6px;
+}
+.keg-arena__vs {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 22px;
+  font-weight: 800;
+  color: #ef4444;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 12px rgba(255, 255, 255, 0.6);
+  z-index: 3;
+  pointer-events: none;
+  animation: kegVsPulse 1.4s ease-in-out infinite;
+}
+@keyframes kegVsPulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.95; }
+  50%      { transform: translate(-50%, -50%) scale(1.18); opacity: 1; }
+}
+
+/* --- Player card --- */
+.keg-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 160px;
+}
+.keg-player__stage {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.keg-player__avatar {
+  font-size: 76px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+  position: relative;
+  z-index: 1;
+  transform-origin: bottom center;
+}
+.keg-player__shadow {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 70px;
+  height: 14px;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.35) 0%, transparent 70%);
+  z-index: 0;
+}
+.keg-player__info {
+  width: 100%;
+  text-align: center;
+}
+.keg-player__name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 14px;
+  color: #1f2937;
+  margin-bottom: 4px;
+}
+.keg-player__level {
+  font-size: 11px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #4338ca;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.keg-player__bar {
+  position: relative;
+  height: 14px;
+  background: #d1fae5;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid #6ee7b7;
+}
+.keg-player__bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #34d399);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.keg-player__bar--low .keg-player__bar-fill {
+  background: linear-gradient(90deg, #dc2626, #f87171);
+  animation: kegLowHp 0.8s ease-in-out infinite;
+}
+.keg-player__bar-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #064e3b;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* --- Player attack animation (swing weapon) --- */
+@keyframes kegPlayerSwing {
+  0%   { transform: rotate(0deg) translateY(0); }
+  30%  { transform: rotate(-15deg) translateX(-8px) translateY(-4px); }
+  60%  { transform: rotate(25deg)  translateX(12px) translateY(-2px); }
+  100% { transform: rotate(0deg) translateY(0); }
+}
+.keg-player--swing .keg-player__avatar {
+  animation: kegPlayerSwing 0.35s ease-out;
+}
+
+/* --- Player hit (recoil) --- */
+@keyframes kegPlayerHit {
+  0%   { transform: translateX(0) rotate(0); filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); }
+  20%  { transform: translateX(-12px) rotate(-6deg); filter: drop-shadow(0 0 12px #ef4444); }
+  40%  { transform: translateX(6px) rotate(4deg); filter: drop-shadow(0 0 8px #ef4444); }
+  70%  { transform: translateX(-3px) rotate(-2deg); }
+  100% { transform: translateX(0) rotate(0); filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); }
+}
+.keg-player--hit .keg-player__avatar {
+  animation: kegPlayerHit 0.5s ease;
+}
+
+/* --- Player shield (glowing aura) --- */
+@keyframes kegPlayerShield {
+  0%   { filter: drop-shadow(0 0 0 #60a5fa); }
+  30%  { filter: drop-shadow(0 0 24px #60a5fa) drop-shadow(0 0 8px #93c5fd); }
+  100% { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); }
+}
+.keg-player--shield .keg-player__avatar {
+  animation: kegPlayerShield 0.7s ease;
+}
+.keg-player--shield::after {
+  content: '🛡️';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 60px;
+  z-index: 3;
+  animation: kegShieldBurst 0.7s ease-out;
+  pointer-events: none;
+}
+@keyframes kegShieldBurst {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  40%  { opacity: 1; transform: translate(-50%, -50%) scale(1.3); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.8); }
+}
+
+/* --- Player crit (glow then lunge) --- */
+@keyframes kegPlayerCrit {
+  0%   { filter: drop-shadow(0 0 0 #fbbf24); transform: translateY(0); }
+  25%  { filter: drop-shadow(0 0 28px #fbbf24) drop-shadow(0 0 12px #f97316); transform: translateY(-6px) scale(1.1); }
+  60%  { filter: drop-shadow(0 0 16px #f59e0b); transform: translateX(20px) scale(1.1); }
+  100% { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); transform: translateY(0); }
+}
+.keg-player--crit .keg-player__avatar {
+  animation: kegPlayerCrit 0.6s ease;
+}
+
+/* --- Monster card updates for arena layout --- */
+.keg-monster {
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  width: 100%;
+  max-width: 180px;
+  padding: 0;
+  margin: 0;
+}
+.keg-monster--boss {
+  background: transparent;
+  box-shadow: none;
+}
+.keg-monster__stage {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.keg-monster__avatar {
+  font-size: 84px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+  position: relative;
+  z-index: 1;
+  transform-origin: bottom center;
+  /* Default idle breathing */
+  animation: kegMonsterBreath 2.4s ease-in-out infinite;
+}
+.keg-monster--boss .keg-monster__avatar {
+  font-size: 100px;
+}
+.keg-monster__shadow {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 16px;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.4) 0%, transparent 70%);
+  z-index: 0;
+}
+.keg-monster__info {
+  width: 100%;
+  text-align: center;
+}
+.keg-monster__name {
+  justify-content: center;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.keg-monster__level { font-size: 10px; }
+.keg-monster__bar {
+  height: 14px;
+  margin-top: 0;
+}
+.keg-monster__bar-text { font-size: 10px; }
+.keg-monster__tag {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+/* --- Monster idle breathing --- */
+@keyframes kegMonsterBreath {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-4px) scale(1.04); }
+}
+
+/* --- Monster shake on damage --- */
+@keyframes kegMonsterShake {
+  0%, 100% { transform: translateX(0) translateY(0); }
+  15% { transform: translateX(-8px) translateY(2px); }
+  30% { transform: translateX(8px) translateY(-2px); }
+  45% { transform: translateX(-6px) translateY(2px); }
+  60% { transform: translateX(6px) translateY(-2px); }
+  75% { transform: translateX(-3px) translateY(0); }
+  90% { transform: translateX(3px) translateY(0); }
+}
+.keg-monster--shake .keg-monster__avatar {
+  animation: kegMonsterShake 0.45s ease, kegMonsterHitColor 0.4s ease;
+}
+@keyframes kegMonsterHitColor {
+  0%   { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)) drop-shadow(0 0 0 #ef4444); }
+  30%  { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)) drop-shadow(0 0 18px #ef4444) drop-shadow(0 0 8px #fff); }
+  100% { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)); }
+}
+
+/* --- Monster charge (preparing to attack) --- */
+@keyframes kegMonsterCharge {
+  0%, 100% { transform: scale(1) translateX(0); }
+  50%      { transform: scale(1.15) translateX(-6px); filter: drop-shadow(0 0 12px #dc2626); }
+}
+.keg-monster--charge .keg-monster__avatar {
+  animation: kegMonsterCharge 0.4s ease-in-out 2;
+}
+
+/* --- Monster lunge (attacking) --- */
+@keyframes kegMonsterLunge {
+  0%   { transform: translateX(0) scale(1); }
+  40%  { transform: translateX(-50px) scale(1.2); filter: drop-shadow(0 0 18px #dc2626); }
+  70%  { transform: translateX(-30px) scale(1.1); }
+  100% { transform: translateX(0) scale(1); }
+}
+.keg-monster--lunge .keg-monster__avatar {
+  animation: kegMonsterLunge 0.3s ease-out;
+}
+
+/* --- Monster death --- */
+@keyframes kegMonsterDie {
+  0%   { transform: scale(1) rotate(0); filter: brightness(1); }
+  30%  { transform: scale(1.3) rotate(-8deg); filter: brightness(2) drop-shadow(0 0 24px #fbbf24); }
+  60%  { transform: scale(0.7) rotate(15deg); filter: brightness(1.5) drop-shadow(0 0 16px #ef4444); }
+  100% { transform: scale(0.4) rotate(25deg) translateY(20px); filter: brightness(0.5); opacity: 0; }
+}
+.keg-monster--die .keg-monster__avatar {
+  animation: kegMonsterDie 0.8s ease-in forwards;
+}
+@keyframes kegMonsterFadeOut {
+  0%   { opacity: 1; }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+.keg-monster--fadeout {
+  animation: kegMonsterFadeOut 0.6s ease-out forwards;
+}
+
+/* --- Projectiles (flying emoji) --- */
+.keg-projectile {
+  position: absolute;
+  font-size: 30px;
+  pointer-events: none;
+  z-index: 20;
+  transform: translate(-50%, -50%);
+  text-shadow: 0 0 8px currentColor;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  --from-x: 0px; --from-y: 0px; --to-x: 0px; --to-y: 0px;
+  left: 0; top: 0;
+  opacity: 0;
+}
+.keg-projectile--fly {
+  animation: kegProjectileFly 0.45s ease-out forwards;
+}
+@keyframes kegProjectileFly {
+  0%   { transform: translate(-50%, -50%) scale(0.4) rotate(0deg);  opacity: 0; left: var(--from-x); top: var(--from-y); }
+  15%  { transform: translate(-50%, -50%) scale(1.1) rotate(180deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1)   rotate(540deg); opacity: 1; left: var(--to-x);   top: var(--to-y); }
+}
+.keg-projectile--burst {
+  animation: kegProjectileBurst 0.2s ease-out forwards !important;
+}
+@keyframes kegProjectileBurst {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+
+/* --- Particle burst (hit confirmation) --- */
+.keg-particle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 18;
+  transform: translate(-50%, -50%);
+  --dx: 0px; --dy: 0px;
+  animation: kegParticleBurst 0.7s ease-out forwards;
+  box-shadow: 0 0 6px currentColor;
+}
+@keyframes kegParticleBurst {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.4); opacity: 0; }
+}
+
+/* --- Damage number float (improved) --- */
+.keg-dmg-number {
+  position: absolute;
+  font-size: 28px;
+  font-weight: 800;
+  color: #facc15;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 0 12px currentColor;
+  pointer-events: none;
+  z-index: 25;
+  transform: translate(-50%, -50%);
+  animation: kegDmgFloat 0.9s ease-out forwards;
+}
+.keg-dmg-number--crit {
+  font-size: 40px;
+  color: #ef4444;
+  animation: kegDmgFloatCrit 0.9s ease-out forwards;
+}
+.keg-dmg-number--taken {
+  font-size: 26px;
+  color: #fca5a5;
+}
+@keyframes kegDmgFloat {
+  0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+  20%  { transform: translate(-50%, -90%) scale(1.3); opacity: 1; }
+  100% { transform: translate(-50%, -160%) scale(1); opacity: 0; }
+}
+@keyframes kegDmgFloatCrit {
+  0%   { transform: translate(-50%, -50%) scale(0.4) rotate(-15deg); opacity: 0; }
+  20%  { transform: translate(-50%, -80%) scale(1.6) rotate(5deg); opacity: 1; }
+  100% { transform: translate(-50%, -180%) scale(1.1) rotate(-5deg); opacity: 0; }
+}
+
+/* --- Streak callout (3/5/7/10) --- */
+.keg-streak-callout {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 32px;
+  font-weight: 800;
+  color: #f97316;
+  text-shadow: 0 0 12px #fbbf24, 0 2px 4px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  pointer-events: none;
+  animation: kegStreakCallout 1.2s ease-out forwards;
+  white-space: nowrap;
+}
+@keyframes kegStreakCallout {
+  0%   { transform: translate(-50%, -50%) scale(0.3) rotate(-10deg); opacity: 0; }
+  20%  { transform: translate(-50%, -50%) scale(1.3) rotate(5deg); opacity: 1; }
+  60%  { transform: translate(-50%, -50%) scale(1.1) rotate(-2deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.4) rotate(0deg); opacity: 0; }
+}
+
+/* --- Critical hit banner --- */
+.keg-crit-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 48px;
+  font-weight: 900;
+  color: #ef4444;
+  text-shadow: 0 0 24px #fbbf24, 0 4px 8px rgba(0, 0, 0, 0.5);
+  z-index: 35;
+  pointer-events: none;
+  animation: kegCritBanner 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  white-space: nowrap;
+}
+@keyframes kegCritBanner {
+  0%   { transform: translate(-50%, -50%) scale(0) rotate(-30deg); opacity: 0; }
+  20%  { transform: translate(-50%, -50%) scale(1.5) rotate(10deg); opacity: 1; }
+  60%  { transform: translate(-50%, -50%) scale(1.1) rotate(-3deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(2) rotate(0deg); opacity: 0; }
+}
+
+/* --- Toast (in-scene) --- */
+.keg-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(17, 24, 39, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  z-index: 30;
+  animation: kegToast 1.5s ease forwards;
+  pointer-events: none;
+  white-space: nowrap;
+}
+@keyframes kegToast {
+  0%   { opacity: 0; transform: translate(-50%, -10px); }
+  15%  { opacity: 1; transform: translate(-50%, 0); }
+  80%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -10px); }
+}
+
+/* --- World-specific arena backgrounds --- */
+.keg-arena__bg--world1 { background: linear-gradient(180deg, rgba(167, 243, 208, 0.0) 0%, rgba(167, 243, 208, 0.5) 100%); }
+.keg-arena__bg--world2 { background: linear-gradient(180deg, rgba(147, 197, 253, 0.0) 0%, rgba(147, 197, 253, 0.5) 100%); }
+.keg-arena__bg--world3 { background: linear-gradient(180deg, rgba(253, 186, 116, 0.0) 0%, rgba(253, 186, 116, 0.5) 100%); }
+.keg-arena__bg--world4 { background: linear-gradient(180deg, rgba(196, 181, 253, 0.0) 0%, rgba(196, 181, 253, 0.5) 100%); }
+.keg-arena__bg--world5 { background: linear-gradient(180deg, rgba(252, 211, 77, 0.0) 0%, rgba(252, 211, 77, 0.5) 100%); }
+.keg-arena__bg--world6 { background: linear-gradient(180deg, rgba(221, 214, 254, 0.0) 0%, rgba(221, 214, 254, 0.5) 100%); }
+
+/* --- Result modal --- */
+.keg-battle-result {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.keg-battle-result__panel {
+  background: #fff;
+  border-radius: 20px;
+  padding: 26px 22px;
+  text-align: center;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.keg-battle-result__emoji { font-size: 64px; }
+.keg-battle-result__panel h2 { font-size: 24px; margin: 8px 0 6px; color: #1f2937; }
+.keg-battle-result--win h2 { color: #16a34a; }
+.keg-battle-result--lose h2 { color: #dc2626; }
+.keg-battle-result__panel p { font-size: 14px; color: #4b5563; margin: 0 0 12px; }
+.keg-battle-result__stars { font-size: 24px; margin: 4px 0 8px; }
+.keg-battle-result__stats {
+  display: flex;
+  justify-content: space-around;
+  background: #f3f4f6;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: #4b5563;
+}
+.keg-battle-result__stats strong { color: #4338ca; font-size: 16px; display: block; }

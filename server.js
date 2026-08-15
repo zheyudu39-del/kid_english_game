@@ -1,0 +1,933 @@
+/**
+ * Kids English Learning Game - Express server
+ * Serves static frontend, vocabulary data, and score CRUD API.
+ * Scores persist to data/scores.json (no database needed).
+ */
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
+
+// Trust X-Forwarded-For only when explicitly deployed behind a reverse proxy
+// (see deploy/nginx.conf). This keeps rate-limiting keyed to real client IPs.
+if (process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', true);
+}
+app.disable('x-powered-by');
+
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const DATA_DIR = path.join(__dirname, 'data');
+const SCORES_FILE = path.join(DATA_DIR, 'scores.json');
+const VOCAB_FILE = path.join(DATA_DIR, 'vocabulary.json');
+const PLAYERS_FILE = path.join(DATA_DIR, 'players.json');
+
+const VALID_AGE_GROUPS = [3, 5, 7, 9, 12, 15, 18, 'adult'];
+const VALID_GAME_MODES = ['word-recognition', 'listening', 'spelling', 'sentences', 'word-hunter'];
+const TOTAL_LEVELS = 666;
+const WORLDS = 6;
+const LEVELS_PER_WORLD = 111;
+
+// Hard caps so the JSON store can't be flooded to unbounded disk growth.
+const MAX_SCORES = 5000;   // leaderboard entries retained
+const MAX_PLAYERS = 5000;  // auto-created player profiles
+
+// Whitelist for nicknames: alphanumerics, CJK, underscore, hyphen. 1-12 chars.
+const NICKNAME_RE = /^[A-Za-z0-9_\-\u4e00-\u9fa5]{1,12}$/;
+
+function isValidNickname(nickname) {
+  return typeof nickname === 'string' && NICKNAME_RE.test(nickname.trim());
+}
+
+// ---------------------------------------------------------------- helpers
+
+function loadScores() {
+  if (_scoresCache.data) return _scoresCache.data;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SCORES_FILE, 'utf-8'));
+    // Defensive: tolerate hand-edited / partially-corrupt files.
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.scores)) {
+      _scoresCache.data = parsed;
+    } else {
+      console.error('scores.json missing "scores" array — resetting to empty store');
+      _scoresCache.loadFailed = true; // back up before any overwrite
+      _scoresCache.data = { scores: [] };
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('scores.json load failed:', err.message);
+      _scoresCache.loadFailed = true; // don't silently destroy recoverable data
+    }
+    _scoresCache.data = { scores: [] };
+  }
+  return _scoresCache.data;
+}
+
+function saveScores(data) {
+  _scoresCache.data = data;
+  // Chain onto the queue for ordering, but capture the write promise itself
+  // so callers see real failures (the queue swallows errors to stay alive).
+  const write = _scoresCache.writeQueue.then(() => {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      // If the file failed to parse on load, back it up before overwriting so
+      // corrupt-but-recoverable data isn't destroyed by the next save.
+      if (_scoresCache.loadFailed) {
+        try { fs.copyFileSync(SCORES_FILE, SCORES_FILE + '.corrupt-' + Date.now()); } catch (e) { /* non-fatal */ }
+      }
+      const tmp = SCORES_FILE + '.tmp';
+      fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8', (err) => {
+        if (err) { reject(err); return; }
+        fs.rename(tmp, SCORES_FILE, (err2) => {
+          if (err2) reject(err2);
+          else { _scoresCache.loadFailed = false; resolve(); }
+        });
+      });
+    });
+  });
+  _scoresCache.writeQueue = write.catch(err => {
+    console.error('saveScores failed:', err);
+  });
+  return write;
+}
+
+// In-memory caches with lazy-load + serialized writes (prevent file race conditions)
+const _playersCache = { data: null, loading: false, loadFailed: false, writeQueue: Promise.resolve() };
+const _scoresCache = { data: null, loading: false, loadFailed: false, writeQueue: Promise.resolve() };
+const _vocabCache = { data: null };
+
+function loadVocabulary() {
+  // Cache the parsed vocabulary: the file is ~1.7MB and reading + parsing it
+  // synchronously on every /api/vocabulary request blocks the event loop.
+  if (_vocabCache.data) return _vocabCache.data;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(VOCAB_FILE, 'utf-8'));
+    if (parsed && typeof parsed === 'object' && parsed.ageGroups && parsed.words) {
+      _vocabCache.data = parsed;
+      return _vocabCache.data;
+    }
+    console.error('vocabulary.json has unexpected shape — serving empty vocabulary');
+  } catch (err) {
+    // Only fall back to empty structure when file genuinely missing;
+    // a parse error should be visible in logs.
+    if (err.code !== 'ENOENT') {
+      console.error('vocabulary.json parse failed:', err.message);
+    }
+  }
+  _vocabCache.data = {
+    version: '1.0',
+    ageGroups: {
+      '3':  { label: '3-4岁',  maxDifficulty: 1 },
+      '5':  { label: '5-6岁',  maxDifficulty: 2 },
+      '7':  { label: '7-8岁',  maxDifficulty: 3 },
+      '9':  { label: '9-10岁', maxDifficulty: 4 },
+      '12': { label: '11-13岁', maxDifficulty: 5 },
+      '15': { label: '14-16岁', maxDifficulty: 6 },
+      '18': { label: '17-18岁', maxDifficulty: 7 },
+      'adult': { label: '雅思8分', maxDifficulty: 8 }
+    },
+    categories: [],
+    words: [],
+    sentences: [],
+    letters: []
+  };
+  return _vocabCache.data;
+}
+
+function loadPlayers() {
+  if (_playersCache.data) return _playersCache.data;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(PLAYERS_FILE, 'utf-8'));
+    // Defensive: a tampered or hand-edited file might not have the expected
+    // shape. Reset to empty rather than crashing every later request on
+    // `data.players[nickname]`.
+    if (parsed && typeof parsed === 'object' && parsed.players && typeof parsed.players === 'object' && !Array.isArray(parsed.players)) {
+      // Rebuild as a null-prototype map so hostile nicknames such as
+      // '__proto__' / 'constructor' / 'toString' can never hit
+      // Object.prototype properties (false "already registered" 409s, and
+      // prototype pollution when a progress write mutates `player.*`).
+      parsed.players = Object.assign(Object.create(null), parsed.players);
+      _playersCache.data = parsed;
+    } else {
+      console.error('players.json missing "players" object — resetting to empty store');
+      _playersCache.loadFailed = true; // back up before any overwrite
+      _playersCache.data = { version: '1.0', players: Object.create(null) };
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('players.json load failed:', err.message);
+      _playersCache.loadFailed = true; // don't silently destroy recoverable data
+    }
+    _playersCache.data = { version: '1.0', players: Object.create(null) };
+  }
+  return _playersCache.data;
+}
+
+/**
+ * Save players atomically. Serializes concurrent writes via a chained promise
+ * so two simultaneous updates don't clobber each other on disk.
+ */
+function savePlayers(data) {
+  _playersCache.data = data;
+  // Chain onto the queue for ordering, but return the actual write promise
+  // so route handlers see failures instead of a false "success".
+  const write = _playersCache.writeQueue.then(() => {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      // If the file failed to parse on load, back it up before overwriting so
+      // corrupt-but-recoverable data isn't destroyed by the next save.
+      if (_playersCache.loadFailed) {
+        try { fs.copyFileSync(PLAYERS_FILE, PLAYERS_FILE + '.corrupt-' + Date.now()); } catch (e) { /* non-fatal */ }
+      }
+      const tmp = PLAYERS_FILE + '.tmp';
+      fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8', (err) => {
+        if (err) { reject(err); return; }
+        fs.rename(tmp, PLAYERS_FILE, (err2) => {
+          if (err2) reject(err2);
+          else { _playersCache.loadFailed = false; resolve(); }
+        });
+      });
+    });
+  });
+  _playersCache.writeQueue = write.catch(err => {
+    console.error('savePlayers failed:', err);
+  });
+  return write;
+}
+
+/**
+ * Hash a password with a per-user random salt.
+ * Stored format: `${saltHex}:${hashHex}` so we can verify without a separate
+ * column for salt. The salt is 16 random bytes; the hash is SHA-256 of
+ * `salt + ':' + password`. Using a unique salt per user defeats rainbow
+ * tables and means two players who pick the same password still get
+ * different stored values.
+ *
+ * NOTE: SHA-256 + salt is a deliberate, conservative choice for a JSON-file
+ * store with no native crypto module beyond `crypto` (no `bcrypt` dep).
+ * It is *not* memory-hard; for higher-value credentials swap to scrypt.
+ */
+function hashPassword(password, saltHex) {
+  const salt = saltHex || crypto.randomBytes(16).toString('hex');
+  const hash = crypto.createHash('sha256').update(salt + ':' + password).digest('hex');
+  return salt + ':' + hash;
+}
+
+// Legacy hashes (first server version) are unsalted SHA-256 hex, 64 chars.
+function isLegacyHash(stored) {
+  return typeof stored === 'string' && /^[0-9a-f]{64}$/i.test(stored);
+}
+
+function verifyPassword(password, stored) {
+  if (typeof stored !== 'string' || stored.length === 0) return false;
+  if (!stored.includes(':')) {
+    // Legacy format: plain unsalted SHA-256 of the password. Verify directly
+    // so old accounts can still log in (the login route migrates them).
+    if (!isLegacyHash(stored)) return false;
+    return crypto.createHash('sha256').update(password).digest('hex') === stored.toLowerCase();
+  }
+  const [salt] = stored.split(':');
+  return hashPassword(password, salt) === stored;
+}
+
+/**
+ * Normalize an X-Player header value for comparison against the URL-path
+ * nickname. Node decodes incoming header bytes as latin1, so a client that
+ * sent raw UTF-8 bytes (e.g. a Chinese nickname) arrives mojibake-encoded,
+ * while a client that sent the percent-encoded form arrives URL-encoded.
+ * Accept any encoding that decodes to the path nickname (which Express has
+ * already URL-decoded correctly).
+ */
+function isAuthorizedCaller(req, nickname) {
+  const caller = (req.get('X-Player') || '').trim();
+  if (!caller) return false;
+  const candidates = [caller];
+  try { candidates.push(decodeURIComponent(caller)); } catch (e) { /* not percent-encoded */ }
+  try { candidates.push(Buffer.from(caller, 'latin1').toString('utf8')); } catch (e) { /* ignore */ }
+  return candidates.some(c => c === nickname);
+}
+
+/**
+ * Create a default player profile for a new nickname.
+ */
+function createDefaultPlayer(nickname, ageGroup) {
+  // Normalize age: number or 'adult' both allowed
+  const normalized = (ageGroup === 'adult' || (typeof ageGroup === 'number' && VALID_AGE_GROUPS.includes(ageGroup)))
+    ? ageGroup
+    : 7;
+  return {
+    nickname: nickname.trim(),
+    ageGroup: normalized,
+    currentLevel: 1,
+    maxLevel: 1,
+    currentWorld: 1,
+    bossDefeated: [],  // world numbers whose boss is beaten
+    coins: 50,
+    skills: { hint: 3, shield: 2, crit: 2 },
+    completedLevels: [],
+    createdAt: new Date().toISOString(),
+    lastPlayAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Compute the world number (1..6) for a given level (1..666).
+ */
+function worldOfLevel(levelNum) {
+  return Math.min(WORLDS, Math.ceil(levelNum / LEVELS_PER_WORLD));
+}
+
+/**
+ * Compute the difficulty band (1..8) for a level.
+ * Piecewise mapping that:
+ *  - world 1 ramps 1..1.5  → rounds to 1
+ *  - world 6 ramps 7.5..8  → rounds to 8 for the final boss
+ * Achieves monotonic growth and hits exactly 8 at level 666.
+ */
+function difficultyOfLevel(levelNum) {
+  // Map 1..666 → 1..8 with non-linear curve weighted toward the high end.
+  const t = (levelNum - 1) / (TOTAL_LEVELS - 1); // 0..1
+  // Power curve < 1 makes early levels gentler, late levels hit the cap.
+  const eased = Math.pow(t, 0.85);
+  const raw = 1 + eased * 7;
+  return Math.min(8, Math.max(1, Math.round(raw)));
+}
+
+/**
+ * Build a battle config for the requested level.
+ * Used by both the GET /api/levels/:id and the battle-stage frontend.
+ */
+function buildLevelConfig(levelNum) {
+  const level = Math.max(1, Math.min(TOTAL_LEVELS, parseInt(levelNum, 10) || 1));
+  const world = worldOfLevel(level);
+  const worldProgress = ((level - 1) % LEVELS_PER_WORLD) + 1;
+  const isBoss = worldProgress === LEVELS_PER_WORLD; // last level of each world
+  const difficulty = difficultyOfLevel(level);
+
+  // Monster HP scales with level
+  const baseHP = level * 2 + 10;
+  const monsterHP = isBoss ? baseHP * 3 : baseHP;
+
+  // Determine monster type by rotation among 4 main game modes
+  const types = ['word-recognition', 'listening', 'spelling', 'sentences'];
+  const monsterType = types[(level - 1) % 4];
+
+  // Monster name pool — expanded to 12+ per type to avoid 4-level repetition
+  const monsterNames = {
+    'word-recognition': ['字母怪', '拼写怪', '词典怪', '语法怪', '字精灵', '词霸怪', '发音怪', '构词怪', '字母鬼', '单词兽', '字谜怪', '词库怪', '词根怪', '词缀怪'],
+    'listening':        ['沉默怪', '回声怪', '耳语怪', '声波怪', '音律怪', '听觉怪', '音符怪', '音波兽', '聆听怪', '谐音怪', '共鸣怪', '震波怪', '静音怪', '回音怪'],
+    'spelling':         ['字母怪', '拼写怪', '字母鬼', '错字怪', '笔画怪', '排字怪', '字形怪', '偏旁怪', '部首怪', '笔顺怪', '拼字兽', '纠错怪', '字符怪', '正字怪'],
+    'sentences':        ['话痨怪', '句子怪', '对话怪', '翻译怪', '语序怪', '句型怪', '语法怪', '时态怪', '从句怪', '短句怪', '复合怪', '语篇怪', '修辞怪', '句法怪']
+  };
+  const namePool = monsterNames[monsterType] || ['神秘怪'];
+  const monsterName = isBoss
+    ? `${['森林','海洋','火山','雪山','天空','星空'][world-1]}领主`
+    : namePool[(level - 1) % namePool.length];
+
+  // Reward
+  const coins = isBoss ? Math.floor(monsterHP / 3) * 2 : Math.floor(monsterHP / 3);
+
+  return {
+    level,
+    world,
+    worldProgress,
+    isBoss,
+    difficulty,
+    monsterHP,
+    monsterType,
+    monsterName,
+    reward: { coins, xp: isBoss ? 100 : 30 }
+  };
+}
+
+/**
+ * Server-side mirror of the frontend LevelGenerator.isUnlocked().
+ * A player may only record a win for a level the UI would actually let them
+ * play, otherwise an attacker could POST any level as "won" and skip ahead.
+ * Rules:
+ *   - Level 1 is always unlocked (even for brand-new players).
+ *   - Any level the player has already completed is replayable.
+ *   - First level of a world (worldProgress === 1, world >= 2): the
+ *     previous world's boss must be defeated.
+ *   - Boss level (worldProgress === LEVELS_PER_WORLD): the previous level
+ *     must be completed (i.e. the player reached the boss legitimately).
+ *   - Normal level: the immediately-previous level must be completed.
+ * This matches the frontend isUnlocked() which gates boss access on having
+ * beaten level 110 in the same world (no "world === 1" carve-out).
+ */
+function isLevelUnlockedServer(levelNum, player) {
+  // Integers only: NaN / Infinity / 3.5-style garbage can never unlock anything,
+  // and `includes()` comparisons are always against integer level numbers.
+  const completed = (player.completedLevels || []).filter(l => typeof l === 'number' && Number.isInteger(l));
+  const bossDefeated = (player.bossDefeated || []).filter(w => typeof w === 'number' && Number.isInteger(w));
+  // Level 1 is always unlocked, even for brand-new players with no history.
+  if (levelNum === 1) return true;
+  // If a player has never finished anything, only level 1 is reachable.
+  if (completed.length === 0 && bossDefeated.length === 0) return false;
+  // Already-completed levels are always replayable (no progression penalty
+  // for re-running; the progress endpoint is idempotent on `completedLevels`).
+  if (completed.includes(levelNum)) return true;
+  const cfg = buildLevelConfig(levelNum);
+  if (cfg.worldProgress === 1) {
+    // First level of a world (>=2): the previous world's boss must be down.
+    // A legacy profile may have the boss in completedLevels but never got a
+    // bossDefeated entry, so treat "completed the boss level" as defeated.
+    const prevBoss = (cfg.world - 1) * LEVELS_PER_WORLD;
+    return cfg.world >= 2 && (bossDefeated.includes(cfg.world - 1) || completed.includes(prevBoss));
+  }
+  if (cfg.isBoss) {
+    // Boss is reachable only by clearing the level just before it.
+    return completed.includes(cfg.level - 1);
+  }
+  // Normal level: the immediately-previous level must be completed.
+  return completed.includes(cfg.level - 1);
+}
+
+function validateScore(req, res, next) {
+  const { nickname, score, ageGroup, gameMode } = req.body || {};
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+  if (typeof score !== 'number' || score < 0 || score > 200) {
+    return res.status(400).json({ error: '分数不合法（0-200）' });
+  }
+  if (!VALID_AGE_GROUPS.includes(ageGroup)) {
+    return res.status(400).json({ error: '年龄段不合法' });
+  }
+  if (!VALID_GAME_MODES.includes(gameMode)) {
+    return res.status(400).json({ error: '游戏模式不合法' });
+  }
+  next();
+}
+
+// ---------------------------------------------------------------- middleware
+
+// Bound the JSON body size so a single client can't pin memory or disk by
+// streaming a huge payload. Real submissions are < 1KB; 16KB is plenty of
+// slack for any future field while still capping per-request memory.
+app.use(express.json({ limit: '16kb' }));
+
+// ---- security headers -------------------------------------------------
+// The SPA relies on inline style attributes, so CSP allows 'unsafe-inline'
+// for styles only. No inline scripts / eval are used anywhere in the app.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "img-src 'self' data:; connect-src 'self'; " +
+    "font-src 'self' https://fonts.gstatic.com; " +
+    "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+// ---- rate limiting (in-memory sliding window, keyed by client IP) ------
+// Bounds write-endpoint spam so the JSON store can't be flooded (DoS / disk fill).
+const RATE_LIMITS = {
+  read:  { limit: 600, windowMs: 60 * 1000 },
+  write: { limit: 60,  windowMs: 60 * 1000 },
+  // Login/register get their own much tighter budget (brute-force defense)
+  // so password guessing can't exhaust the general write allowance.
+  auth:  { limit: 10,  windowMs: 60 * 1000 }
+};
+const _rateBuckets = new Map();
+
+function rateLimit(kind) {
+  return (req, res, next) => {
+    const cfg = RATE_LIMITS[kind];
+    const now = Date.now();
+    // Key by IP *and* kind so read traffic can't exhaust the write budget
+    // (and vice versa).
+    const key = req.ip + '|' + kind;
+    let bucket = _rateBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { hits: 0, resetAt: now + cfg.windowMs };
+      _rateBuckets.set(key, bucket);
+    }
+    bucket.hits++;
+    if (bucket.hits > cfg.limit) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ error: '请求太频繁，请稍后再试' });
+    }
+    // Opportunistic cleanup so the bucket map itself can't grow without bound.
+    if (_rateBuckets.size > 10000) {
+      for (const [k, v] of _rateBuckets) {
+        if (v.resetAt <= now) _rateBuckets.delete(k);
+      }
+    }
+    next();
+  };
+}
+
+// Periodic sweep of expired rate-limit buckets. The per-request cleanup only
+// triggers above 10k entries, so without this a trickle of one-off IPs would
+// accumulate buckets forever.
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _rateBuckets) {
+    if (v.resetAt <= now) _rateBuckets.delete(k);
+  }
+}, 5 * 60 * 1000).unref();
+
+// Every /api request is rate-limited. POSTs and /api/players* (which can
+// auto-create a profile on GET) use the stricter write budget. Login and
+// register use the tightest "auth" budget to slow password guessing.
+app.use('/api', (req, res, next) => {
+  if (req.method === 'POST' && (req.path === '/login' || req.path === '/register')) {
+    return rateLimit('auth')(req, res, next);
+  }
+  const isWrite = req.method === 'POST' || req.originalUrl.startsWith('/api/players');
+  rateLimit(isWrite ? 'write' : 'read')(req, res, next);
+});
+
+app.use(express.static(PUBLIC_DIR));
+
+// ---------------------------------------------------------------- API routes
+
+// GET /api/vocabulary?age=7  -> vocabulary; if age given, restrict to words
+// appropriate for that age. The game itself picks a sub-range per level.
+app.get('/api/vocabulary', (req, res) => {
+  const vocab = loadVocabulary();
+  const rawAge = req.query.age;
+
+  // No age param: return the full vocabulary (callers handle their own
+  // age gating client-side).
+  if (rawAge == null || rawAge === '') {
+    return res.json(vocab);
+  }
+
+  // Reject obviously bad values (empty after trim, multi-char strings that
+  // don't match a valid age key, non-numeric non-'adult' values) with 400
+  // so a bug in the client doesn't quietly fall back to the full payload.
+  if (rawAge !== 'adult') {
+    const ageNum = Number(rawAge);
+    if (!Number.isInteger(ageNum) || !VALID_AGE_GROUPS.includes(ageNum)) {
+      return res.status(400).json({ error: '年龄段参数不合法' });
+    }
+    if (!vocab.ageGroups[String(ageNum)]) {
+      return res.status(400).json({ error: '年龄段参数不合法' });
+    }
+    return res.json({
+      version: vocab.version,
+      ageGroup: ageNum,
+      maxDifficulty: vocab.ageGroups[String(ageNum)].maxDifficulty,
+      categories: vocab.categories,
+      // Send ALL words up to the age-appropriate cap so the game can
+      // pick any sub-range per level (older kids can still face easy
+      // levels in world 1, and hard words in world 4+).
+      words: vocab.words.filter(w => w.difficulty <= vocab.ageGroups[String(ageNum)].maxDifficulty),
+      sentences: vocab.sentences.filter(s => s.difficulty <= vocab.ageGroups[String(ageNum)].maxDifficulty),
+      letters: vocab.letters
+    });
+  }
+
+  // rawAge === 'adult'
+  const adult = vocab.ageGroups.adult;
+  if (!adult) {
+    return res.status(500).json({ error: '词库未配置 adult 年龄段' });
+  }
+  res.json({
+    version: vocab.version,
+    ageGroup: 'adult',
+    maxDifficulty: adult.maxDifficulty,
+    categories: vocab.categories,
+    words: vocab.words.filter(w => w.difficulty <= adult.maxDifficulty),
+    sentences: vocab.sentences.filter(s => s.difficulty <= adult.maxDifficulty),
+    letters: vocab.letters
+  });
+});
+
+// GET /api/scores?limit=20&age=7&game=word-recognition&nickname=xx
+app.get('/api/scores', (req, res) => {
+  const { limit, age, game, nickname } = req.query;
+  let scores = loadScores().scores;
+
+  if (age) {
+    // 'adult' must be compared as a string; parseInt('adult') is NaN and the
+    // old filter silently matched nothing (empty leaderboard). Validate so a
+    // bad value is loud instead of returning a misleading empty list.
+    const ageKey = age === 'adult' ? 'adult' : Number(age);
+    if (ageKey !== 'adult' && (!Number.isInteger(ageKey) || !VALID_AGE_GROUPS.includes(ageKey))) {
+      return res.status(400).json({ error: '年龄段参数不合法' });
+    }
+    scores = scores.filter(s => s.ageGroup === ageKey);
+  }
+  if (game) scores = scores.filter(s => s.gameMode === game);
+  if (nickname) scores = scores.filter(s => s.nickname === nickname.trim());
+
+  // Sort by score descending (highest first), then most recent
+  scores.sort((a, b) => b.score - a.score || new Date(b.date) - new Date(a.date));
+
+  const n = parseInt(limit, 10);
+  // Clamp to 500 so a caller can't force a full 5000-entry scan for no reason.
+  if (!Number.isNaN(n) && n > 0) scores = scores.slice(0, Math.min(n, 500));
+
+  res.json({ scores });
+});
+
+// GET /api/scores/:nickname  -> one player's history + best score
+app.get('/api/scores/:nickname', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+  const entries = loadScores().scores
+    .filter(s => s.nickname === nickname)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  res.json({
+    nickname,
+    count: entries.length,
+    best: entries.reduce((m, s) => Math.max(m, s.score), 0),
+    entries
+  });
+});
+
+// POST /api/scores  -> submit a game result
+app.post('/api/scores', validateScore, (req, res) => {
+  const { nickname, score, ageGroup, gameMode, category } = req.body;
+
+  // roundsPlayed / correctCount are informational stats — clamp them so a
+  // crafted payload can't store negative numbers, strings, or huge values.
+  const roundsPlayed = Math.min(100, Math.max(1, Math.floor(Number(req.body.roundsPlayed)) || 10));
+  const correctCount = Math.min(roundsPlayed, Math.max(0, Math.floor(Number(req.body.correctCount)) || 0));
+  // Category is free-form: strip HTML metacharacters and cap length so a
+  // malicious value can never become a stored-XSS payload.
+  const cleanCategory = typeof category === 'string'
+    ? (category.replace(/[<>"']/g, '').trim().slice(0, 32) || 'mixed')
+    : 'mixed';
+
+  const entry = {
+    id: crypto.randomBytes(4).toString('hex'),
+    nickname: nickname.trim(),
+    score,
+    ageGroup,
+    gameMode,
+    category: cleanCategory,
+    date: new Date().toISOString(),
+    roundsPlayed,
+    correctCount
+  };
+
+  const data = loadScores();
+  data.scores.push(entry);
+  // Keep only the most recent entries so the JSON file can't grow unbounded.
+  if (data.scores.length > MAX_SCORES) {
+    data.scores = data.scores.slice(data.scores.length - MAX_SCORES);
+  }
+  saveScores(data).then(() => {
+    res.status(201).json({ success: true, id: entry.id });
+  }).catch(err => {
+    res.status(500).json({ error: '保存失败: ' + err.message });
+  });
+});
+
+// GET /api/health  -> simple health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// ---------------------------------------------------------------- Player / Level API
+
+// GET /api/players/:nickname  ->  fetch a player profile (requires registration
+// AND that the caller proves they own the profile via X-Player header).
+// Without that gate any anonymous visitor could enumerate every player's
+// progress, coins, and world state by guessing / scraping nicknames.
+app.get('/api/players/:nickname', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+
+  // Caller must be authenticated (header must match the requested nickname).
+  // Returning 401 (not 404) so a logged-in client knows it lost its session.
+  // isAuthorizedCaller normalizes encoding so URL-encoded / UTF-8 header
+  // variants of the same nickname still match the decoded path parameter.
+  if (!isAuthorizedCaller(req, nickname)) {
+    return res.status(401).json({ error: '请先登录' });
+  }
+
+  const data = loadPlayers();
+  const player = data.players[nickname];
+
+  // Check if player exists and is registered (has password hash)
+  if (!player) {
+    return res.status(404).json({ error: '玩家不存在' });
+  }
+
+  if (!player.passwordHash) {
+    return res.status(404).json({ error: '该账号未注册' });
+  }
+
+  // Return player data without password hash
+  const { passwordHash: _, ...playerWithoutPassword } = player;
+  res.json(playerWithoutPassword);
+});
+
+// POST /api/players/:nickname/progress  ->  record a level result
+app.post('/api/players/:nickname/progress', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+  const { level, won } = req.body || {};
+  if (typeof level !== 'number' || !Number.isInteger(level) || level < 1 || level > TOTAL_LEVELS) {
+    return res.status(400).json({ error: '关卡号不合法' });
+  }
+  if (typeof won !== 'boolean') {
+    return res.status(400).json({ error: 'won 参数必须是布尔值' });
+  }
+
+  // Auth gate: caller must own the profile (X-Player header == nickname).
+  // Without this, any client can rewrite another player's progress.
+  if (!isAuthorizedCaller(req, nickname)) {
+    return res.status(401).json({ error: '请先登录' });
+  }
+
+  // coinsEarned is NOT accepted from client - computed server-side
+  const data = loadPlayers();
+  const player = data.players[nickname];
+  if (!player) return res.status(404).json({ error: '玩家不存在' });
+
+  // Defensive: legacy/corrupt profiles might be missing these fields.
+  if (!Array.isArray(player.completedLevels)) player.completedLevels = [];
+  if (!Array.isArray(player.bossDefeated)) player.bossDefeated = [];
+  if (typeof player.coins !== 'number' || !Number.isFinite(player.coins)) player.coins = 0;
+  if (typeof player.maxLevel !== 'number' || !Number.isFinite(player.maxLevel)) player.maxLevel = 1;
+  if (typeof player.currentLevel !== 'number' || !Number.isFinite(player.currentLevel)) player.currentLevel = 1;
+
+  if (won) {
+    // Server-authoritative anti-cheat: only record a win for a level the UI
+    // would actually let this player play. This stops a client from POSTing
+    // "level 666 won" to skip ahead.
+    // Note: maxLevel is the highest *next-unlocked* level (= max completed + 1),
+    // not the highest played level, so the previous "level > maxLevel" fallback
+    // was unsound (a player who has beaten high levels could re-claim any low
+    // level for coins). The unlock check is the single source of truth.
+    if (!isLevelUnlockedServer(level, player)) {
+      return res.status(400).json({ error: '关卡尚未解锁，无法记录通关' });
+    }
+    // Replays of already-cleared levels are allowed (unlock check above), but
+    // rewards are granted ONLY on the first clear — otherwise a client could
+    // re-POST "level 1 won" forever and mint unlimited coins.
+    const firstClear = !player.completedLevels.includes(level);
+    if (firstClear) {
+      player.completedLevels.push(level);
+      // maxLevel is the next unlocked level = max completed + 1 (clamped so
+      // beating the final level can't leave a 667 drifting around).
+      player.maxLevel = Math.min(TOTAL_LEVELS, Math.max(player.maxLevel, level + 1));
+      player.currentLevel = Math.min(player.maxLevel, TOTAL_LEVELS);
+      // Compute reward server-side to prevent cheating
+      const cfg = buildLevelConfig(level);
+      player.coins += (cfg.reward && cfg.reward.coins) || 0;
+      player.currentWorld = cfg.world;
+
+      // Boss defeat?
+      if (cfg.isBoss && cfg.world >= 1 && cfg.world <= WORLDS && !player.bossDefeated.includes(cfg.world)) {
+        player.bossDefeated.push(cfg.world);
+      }
+    }
+  }
+  player.lastPlayAt = new Date().toISOString();
+  savePlayers(data).then(() => {
+    res.json({ success: true, player });
+  }).catch(err => {
+    res.status(500).json({ error: '保存失败: ' + err.message });
+  });
+});
+
+// GET /api/levels/:id  ->  configuration for a specific level
+app.get('/api/levels/:id', (req, res) => {
+  // Require a pure digit string: parseInt would silently accept "1abc", "1e2"
+  // or "1.5" and return the wrong level's config.
+  const idRaw = String(req.params.id || '');
+  if (!/^\d{1,3}$/.test(idRaw)) {
+    return res.status(400).json({ error: '关卡号必须在 1-' + TOTAL_LEVELS + ' 之间' });
+  }
+  const levelNum = parseInt(idRaw, 10);
+  if (levelNum < 1 || levelNum > TOTAL_LEVELS) {
+    return res.status(400).json({ error: '关卡号必须在 1-' + TOTAL_LEVELS + ' 之间' });
+  }
+  res.json(buildLevelConfig(levelNum));
+});
+
+// GET /api/levels  ->  metadata for all 666 levels (lightweight; ~5KB)
+app.get('/api/levels', (req, res) => {
+  const list = [];
+  for (let i = 1; i <= TOTAL_LEVELS; i++) {
+    const c = buildLevelConfig(i);
+    list.push({
+      level: c.level,
+      world: c.world,
+      isBoss: c.isBoss,
+      difficulty: c.difficulty,
+      monsterType: c.monsterType
+    });
+  }
+  res.json({ totalLevels: TOTAL_LEVELS, worlds: WORLDS, levels: list });
+});
+
+// POST /api/register  ->  register a new player account
+app.post('/api/register', (req, res) => {
+  const { nickname, password, age } = req.body || {};
+
+  // Validate nickname
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+
+  // Validate password: 6-64 chars, matching the frontend's PASSWORD_MAX so
+  // a password the UI would never let you type can't be stored either.
+  if (typeof password !== 'string' || password.length < 6 || password.length > 64) {
+    return res.status(400).json({ error: '密码长度必须为 6-64 位' });
+  }
+
+  // Validate age: must be EXACTLY one of the allowed values (number or 'adult').
+  // Reject missing / null / out-of-range rather than silently defaulting,
+  // otherwise a bug in the client could lock a player into the wrong bucket
+  // with no way to tell from the API.
+  if (age !== 'adult' && (typeof age !== 'number' || !Number.isInteger(age) || !VALID_AGE_GROUPS.includes(age))) {
+    return res.status(400).json({ error: '年龄段不合法' });
+  }
+
+  const data = loadPlayers();
+  const trimmedName = nickname.trim();
+
+  // Check if nickname already exists.
+  const existing = data.players[trimmedName];
+  if (existing) {
+    if (existing.passwordHash) {
+      return res.status(409).json({ error: '该昵称已被注册' });
+    }
+    // Legacy profile (created before accounts existed, so no password yet):
+    // let the player claim it by setting a password. Keep all progress,
+    // coins and skills — only add the credential. Without this, legacy
+    // players are permanently locked out of both login and register.
+    existing.passwordHash = hashPassword(password);
+    if (!Array.isArray(existing.completedLevels)) existing.completedLevels = [];
+    if (!Array.isArray(existing.bossDefeated)) existing.bossDefeated = [];
+    if (typeof existing.coins !== 'number' || !Number.isFinite(existing.coins)) existing.coins = 50;
+    if (typeof existing.maxLevel !== 'number' || !Number.isFinite(existing.maxLevel)) existing.maxLevel = 1;
+    if (typeof existing.currentLevel !== 'number' || !Number.isFinite(existing.currentLevel)) existing.currentLevel = 1;
+    if (!existing.skills || typeof existing.skills !== 'object') existing.skills = { hint: 3, shield: 2, crit: 2 };
+    existing.lastPlayAt = new Date().toISOString();
+    savePlayers(data).then(() => {
+      // Return player data without password hash
+      const { passwordHash: _, ...playerWithoutPassword } = existing;
+      res.status(201).json({ success: true, player: playerWithoutPassword });
+    }).catch(err => {
+      res.status(500).json({ error: '注册失败: ' + err.message });
+    });
+    return;
+  }
+
+  // Hard cap so a scripted flood of nicknames can't grow the store forever
+  if (Object.keys(data.players).length >= MAX_PLAYERS) {
+    return res.status(503).json({ error: '玩家数量已达上限，暂时无法注册' });
+  }
+
+  // Hash password with a fresh per-user salt.
+  const passwordHash = hashPassword(password);
+  
+  // Create new player with password hash
+  const newPlayer = createDefaultPlayer(trimmedName, age);
+  newPlayer.passwordHash = passwordHash;
+  newPlayer.createdAt = new Date().toISOString();
+  newPlayer.lastPlayAt = new Date().toISOString();
+  
+  data.players[trimmedName] = newPlayer;
+  
+  savePlayers(data).then(() => {
+    // Return player data without password hash
+    const { passwordHash: _, ...playerWithoutPassword } = newPlayer;
+    res.status(201).json({ success: true, player: playerWithoutPassword });
+  }).catch(err => {
+    res.status(500).json({ error: '注册失败: ' + err.message });
+  });
+});
+
+// POST /api/login  ->  login with nickname and password
+app.post('/api/login', (req, res) => {
+  const { nickname, password } = req.body || {};
+
+  // Validate nickname
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+
+  // Validate password
+  if (typeof password !== 'string' || password.length === 0) {
+    return res.status(400).json({ error: '密码不能为空' });
+  }
+
+  const data = loadPlayers();
+  const trimmedName = nickname.trim();
+  const player = data.players[trimmedName];
+
+  // SECURITY: collapse every "credential wrong" case to the SAME error
+  // message, with the SAME timing, so an attacker can't tell from the
+  // response whether the nickname is registered, has no password yet
+  // (legacy profile), or simply had the wrong password. verifyPassword
+  // always performs exactly one hash (over the real stored hash, or over a
+  // constant dummy hash when the user doesn't exist), so all branches burn
+  // the same CPU.
+  const dummyHash = hashPassword(password, '0'.repeat(32));
+  const stored = player && player.passwordHash;
+  const ok = verifyPassword(password, stored || dummyHash);
+  if (!ok) {
+    return res.status(401).json({ error: '昵称或密码错误' });
+  }
+
+  // Migrate legacy unsalted SHA-256 hashes to the salted format in place,
+  // so old accounts are upgraded on their first successful login.
+  if (isLegacyHash(stored)) {
+    player.passwordHash = hashPassword(password);
+  }
+
+  // Update last play time
+  player.lastPlayAt = new Date().toISOString();
+  savePlayers(data).then(() => {
+    // Return player data without password hash
+    const { passwordHash: _, ...playerWithoutPassword } = player;
+    res.json({ success: true, player: playerWithoutPassword });
+  }).catch(err => {
+    res.status(500).json({ error: '登录失败: ' + err.message });
+  });
+});
+
+// Unmatched /api routes get a JSON 404, so a typo'd API path doesn't
+// silently return the SPA HTML.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: '接口不存在' });
+});
+
+// SPA fallback: any non-API GET route returns index.html
+app.get(/^\/(?!api\/).*/, (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
+// Final error handler: never leak stack traces or internal paths (e.g. a
+// malformed JSON body must not echo body-parser internals).
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error('Unhandled error:', err);
+  res.status(status).json({
+    error: status >= 500 ? '服务器内部错误' : '请求无效'
+  });
+});
+
+// ---------------------------------------------------------------- start
+
+// Default to loopback: nginx (deploy/nginx.conf) proxies public traffic to
+// 127.0.0.1:3000. Set HOST=0.0.0.0 to expose directly on the network.
+app.listen(PORT, HOST, () => {
+  console.log(`\n🎮  Kids English Learning Game`);
+  console.log(`   Listening on http://${HOST}:${PORT}\n`);
+});

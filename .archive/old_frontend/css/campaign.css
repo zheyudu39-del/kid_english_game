@@ -1,0 +1,516 @@
+/* ============================================================
+   campaign.css - Styles for the 666-level campaign system.
+   World map, battle stage, monster card, skills bar, damage FX.
+   ============================================================ */
+
+/* --- World-map top bar --- */
+.keg-map-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto 18px;
+  padding: 6px 4px;
+}
+.keg-map-topbar__title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--keg-primary, #6366f1);
+}
+.keg-map-topbar__coins {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f59e0b;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+/* --- World tabs --- */
+.keg-world-tabs {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto 16px;
+  overflow-x: auto;
+  padding: 6px 2px;
+}
+.keg-world-tab {
+  flex: 1 0 auto;
+  min-width: 96px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 2px solid transparent;
+  border-radius: 14px;
+  padding: 8px 6px 6px;
+  cursor: pointer;
+  position: relative;
+  font: inherit;
+  color: #374151;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.keg-world-tab:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.keg-world-tab--current {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
+}
+.keg-world-tab--completed .keg-world-tab__check {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  color: #16a34a;
+  font-weight: 700;
+  font-size: 14px;
+}
+.keg-world-tab--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: #f3f4f6;
+}
+.keg-world-tab--locked:hover {
+  transform: none;
+  box-shadow: none;
+}
+.keg-world-tab__lock {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 14px;
+}
+.keg-world-tab__emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+.keg-world-tab__name {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* --- World detail (active world's map) --- */
+.keg-world-detail {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  border-radius: 18px;
+  padding: 16px 14px 22px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
+}
+.keg-world-detail__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.keg-world-detail__emoji {
+  font-size: 44px;
+}
+.keg-world-detail__name {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  color: #1f2937;
+}
+.keg-world-detail__desc {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #4b5563;
+}
+
+/* --- Level grid (111 dots) --- */
+.keg-level-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 8px;
+}
+.keg-level {
+  background: #fff;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 6px 4px;
+  cursor: pointer;
+  position: relative;
+  font: inherit;
+  color: #1f2937;
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+}
+.keg-level:not(:disabled):hover {
+  transform: translateY(-2px);
+  border-color: #6366f1;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.18);
+}
+.keg-level--done {
+  background: linear-gradient(180deg, #d1fae5 0%, #a7f3d0 100%);
+  border-color: #34d399;
+}
+.keg-level--boss {
+  background: linear-gradient(180deg, #fee2e2 0%, #fecaca 100%);
+  border-color: #f87171;
+}
+.keg-level--current {
+  outline: 3px solid #f59e0b;
+  outline-offset: 1px;
+  animation: kegPulse 1.6s ease-in-out infinite;
+}
+.keg-level--locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f3f4f6;
+}
+.keg-level__num {
+  font-weight: 700;
+  font-size: 15px;
+  color: #6366f1;
+}
+.keg-level--boss .keg-level__num { color: #dc2626; }
+.keg-level__type {
+  font-size: 18px;
+  line-height: 1.2;
+}
+.keg-level__stars {
+  font-size: 10px;
+  margin-top: 2px;
+  color: #6b7280;
+}
+
+@keyframes kegPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+}
+
+/* --- Battle stage --- */
+.keg-battle {
+  width: 100%;
+  min-height: 100vh;
+  padding: 16px 12px 140px; /* room for fixed skills bar (~110px) + breathing */
+  transition: background 0.4s;
+}
+.keg-battle__inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.keg-battle__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 14px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  backdrop-filter: blur(4px);
+}
+.keg-battle__world {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4338ca;
+}
+.keg-battle__level {
+  font-size: 13px;
+  color: #6b7280;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.keg-battle__arena {
+  position: relative;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 16px;
+  padding: 16px 10px;
+  min-height: 320px;
+  overflow: hidden;
+}
+.keg-battle__game {
+  width: 100%;
+}
+
+/* --- Monster card --- */
+.keg-monster {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid #fecaca;
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.12);
+}
+.keg-monster--boss {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #fff7ed 0%, #fef3c7 100%);
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.25);
+}
+.keg-monster__avatar {
+  font-size: 54px;
+  line-height: 1;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+.keg-monster--hit {
+  animation: kegMonsterHit 0.4s ease;
+}
+.keg-monster--shake {
+  animation: kegMonsterShake 0.4s ease;
+}
+@keyframes kegMonsterHit {
+  0%   { transform: scale(1); filter: drop-shadow(0 0 0 #ef4444); }
+  30%  { transform: scale(0.92); filter: drop-shadow(0 0 8px #ef4444); }
+  100% { transform: scale(1); filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15)); }
+}
+@keyframes kegMonsterShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+.keg-monster__info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.keg-monster__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 17px;
+  color: #1f2937;
+}
+.keg-monster__crown { font-size: 18px; }
+.keg-monster__level {
+  margin-left: auto;
+  font-size: 12px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #4338ca;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.keg-monster__bar {
+  position: relative;
+  height: 18px;
+  background: #fee2e2;
+  border-radius: 999px;
+  margin-top: 6px;
+  overflow: hidden;
+  border: 1px solid #fca5a5;
+}
+.keg-monster__bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.keg-monster__bar--low .keg-monster__bar-fill {
+  background: linear-gradient(90deg, #dc2626, #b91c1c);
+  animation: kegLowHp 0.8s ease-in-out infinite;
+}
+@keyframes kegLowHp {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.7; }
+}
+.keg-monster__bar-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7f1d1d;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.keg-monster__tag {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fee2e2;
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 6px;
+}
+
+/* --- Skills bar --- */
+.keg-skills {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: rgba(255, 255, 255, 0.97);
+  border-top: 1px solid #e5e7eb;
+  padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 8px);
+  z-index: 50;
+  box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.06);
+}
+.keg-skills__coins {
+  font-size: 14px;
+  font-weight: 700;
+  color: #b45309;
+  margin-bottom: 6px;
+  text-align: center;
+}
+.keg-skills__row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.keg-skill {
+  flex: 1 1 0;
+  min-width: 0;
+  background: #f9fafb;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 6px 4px 5px;
+  cursor: pointer;
+  position: relative;
+  font: inherit;
+  color: #1f2937;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.keg-skill:not(:disabled):hover {
+  border-color: #6366f1;
+  background: #eef2ff;
+  transform: translateY(-1px);
+}
+.keg-skill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.keg-skill--owned {
+  background: linear-gradient(180deg, #fef3c7 0%, #fde68a 100%);
+  border-color: #fbbf24;
+}
+.keg-skill--empty {
+  background: #f3f4f6;
+}
+.keg-skill--used {
+  animation: kegSkillUsed 0.35s ease;
+}
+@keyframes kegSkillUsed {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(0.92); background: #bbf7d0; }
+  100% { transform: scale(1); }
+}
+.keg-skill__emoji { font-size: 22px; line-height: 1; }
+.keg-skill__name  { font-size: 11px; font-weight: 600; margin-top: 2px; }
+.keg-skill__count  { font-size: 10px; color: #4338ca; }
+.keg-skill__cost   { font-size: 10px; color: #b45309; }
+
+/* --- Floating damage numbers --- */
+.keg-dmg-number {
+  position: absolute;
+  font-size: 28px;
+  font-weight: 800;
+  color: #ef4444;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  animation: kegDmgFloat 0.9s ease-out forwards;
+  z-index: 10;
+}
+@keyframes kegDmgFloat {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  20%  { transform: translateY(-10px) scale(1.2); opacity: 1; }
+  100% { transform: translateY(-60px) scale(1); opacity: 0; }
+}
+
+/* --- Toast --- */
+.keg-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(17, 24, 39, 0.92);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  z-index: 20;
+  animation: kegToast 1.5s ease forwards;
+  pointer-events: none;
+}
+@keyframes kegToast {
+  0%   { opacity: 0; transform: translate(-50%, -10px); }
+  15%  { opacity: 1; transform: translate(-50%, 0); }
+  80%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -10px); }
+}
+
+/* --- Battle result modal --- */
+.keg-battle-result {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.keg-battle-result__panel {
+  background: #fff;
+  border-radius: 20px;
+  padding: 26px 22px;
+  text-align: center;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.keg-battle-result__emoji { font-size: 64px; }
+.keg-battle-result__panel h2 {
+  font-size: 24px;
+  margin: 8px 0 6px;
+  color: #1f2937;
+}
+.keg-battle-result--win h2 { color: #16a34a; }
+.keg-battle-result--lose h2 { color: #dc2626; }
+.keg-battle-result__panel p {
+  font-size: 14px;
+  color: #4b5563;
+  margin: 0 0 12px;
+}
+.keg-battle-result__stats {
+  display: flex;
+  justify-content: space-around;
+  background: #f3f4f6;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #4b5563;
+}
+.keg-battle-result__stats strong { color: #4338ca; font-size: 18px; }
+
+/* --- Campaign card highlight on menu --- */
+.keg-card--campaign {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+}
+.keg-card--campaign .keg-card__title,
+.keg-card--campaign .keg-card__desc {
+  color: #fff;
+}
+
+/* --- Legacy menu (collapsed details) --- */
+.keg-menu-legacy summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #6b7280;
+  text-align: center;
+  padding: 6px 0;
+  list-style: none;
+  user-select: none;
+}
+.keg-menu-legacy summary::-webkit-details-marker { display: none; }
+.keg-menu-legacy summary::before { content: '▸ '; }
+.keg-menu-legacy[open] summary::before { content: '▾ '; }

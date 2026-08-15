@@ -1,0 +1,292 @@
+[
+  {
+    "id": "an21",
+    "english": "mouse",
+    "chinese": "老鼠",
+    "emoji": "🐭",
+    "category": "animals",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "an22",
+    "english": "frog",
+    "chinese": "青蛙",
+    "emoji": "🐸",
+    "category": "animals",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "an23",
+    "english": "bee",
+    "chinese": "蜜蜂",
+    "emoji": "🐝",
+    "category": "animals",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "an24",
+    "english": "butterfly",
+    "chinese": "蝴蝶",
+    "emoji": "🦋",
+    "category": "animals",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "fm15",
+    "english": "boy",
+    "chinese": "男孩",
+    "emoji": "👦",
+    "category": "family",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "fm16",
+    "english": "girl",
+    "chinese": "女孩",
+    "emoji": "👧",
+    "category": "family",
+    "difficulty": 1,
+    "ageMin": 3,
+    "phonetic": ""
+  },
+  {
+    "id": "an25",
+    "english": "turtle",
+    "chinese": "乌龟",
+    "emoji": "🐢",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an26",
+    "english": "whale",
+    "chinese": "鲸鱼",
+    "emoji": "🐳",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an27",
+    "english": "crab",
+    "chinese": "螃蟹",
+    "emoji": "🦀",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an28",
+    "english": "shrimp",
+    "chinese": "虾",
+    "emoji": "🦐",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an29",
+    "english": "owl",
+    "chinese": "猫头鹰",
+    "emoji": "🦉",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an30",
+    "english": "squirrel",
+    "chinese": "松鼠",
+    "emoji": "🐿️",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an31",
+    "english": "wolf",
+    "chinese": "狼",
+    "emoji": "🐺",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "an32",
+    "english": "fox",
+    "chinese": "狐狸",
+    "emoji": "🦊",
+    "category": "animals",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd21",
+    "english": "hot dog",
+    "chinese": "热狗",
+    "emoji": "🌭",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd22",
+    "english": "fries",
+    "chinese": "薯条",
+    "emoji": "🍟",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd23",
+    "english": "donut",
+    "chinese": "甜甜圈",
+    "emoji": "🍩",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd24",
+    "english": "ice",
+    "chinese": "冰",
+    "emoji": "🧊",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd25",
+    "english": "cheese",
+    "chinese": "奶酪",
+    "emoji": "🧀",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd26",
+    "english": "butter",
+    "chinese": "黄油",
+    "emoji": "🧈",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "fd27",
+    "english": "honey",
+    "chinese": "蜂蜜",
+    "emoji": "🍯",
+    "category": "food",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "cw15",
+    "english": "shoes",
+    "chinese": "鞋子",
+    "emoji": "👟",
+    "category": "clothes",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "cw16",
+    "english": "socks",
+    "chinese": "袜子",
+    "emoji": "🧦",
+    "category": "clothes",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "ac21",
+    "english": "walk",
+    "chinese": "走",
+    "emoji": "🚶",
+    "category": "actions",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "ac22",
+    "english": "sit",
+    "chinese": "坐",
+    "emoji": "🪑",
+    "category": "actions",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "ac23",
+    "english": "stand",
+    "chinese": "站",
+    "emoji": "🧍",
+    "category": "actions",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "ac24",
+    "english": "see",
+    "chinese": "看",
+    "emoji": "👀",
+    "category": "actions",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "ac25",
+    "english": "hear",
+    "chinese": "听",
+    "emoji": "👂",
+    "category": "actions",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  },
+  {
+    "id": "hs15",
+    "english": "lamp",
+    "chinese": "灯",
+    "emoji": "💡",
+    "category": "house",
+    "difficulty": 2,
+    "ageMin": 4,
+    "phonetic": ""
+  }
+]
