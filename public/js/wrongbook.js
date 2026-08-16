@@ -260,12 +260,12 @@
     }
   }
 
-  function startReview() {
+  async function startReview() {
     const g = window._game;
     if (!g || typeof g.startReviewLevel !== 'function') return;
     g.playerName = playerName();
     closeScreen();
-    if (!g.startReviewLevel()) {
+    if (!(await g.startReviewLevel())) {
       // Nothing due (or book empty) — reopen so the state above stays true.
       openScreen();
     }

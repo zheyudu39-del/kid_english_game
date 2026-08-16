@@ -220,6 +220,20 @@
       const staleModal = document.getElementById('question-modal');
       if (staleModal) staleModal.classList.add('hidden');
       this.activeMonster = null;
+      // The title start button normally preloads the vocabulary, but the
+      // map entry (and any direct start) can begin a level on a fresh page
+      // where this.words is still empty — without this the level spawns
+      // zero monsters. Same guard the net-mode path uses.
+      if (!this.words || this.words.length === 0) {
+        try {
+          this.vocabulary = await API.getVocabulary();
+          this.words = (this.vocabulary && this.vocabulary.words) || [];
+        } catch (e) {
+          this.vocabulary = null;
+          this.words = [];
+          // Questions still work with the static fallback distractors.
+        }
+      }
       // Make sure /api/levels has been fetched at least once. If the
       // network is down we still fall back to the sync `getLevel` path
       // which generates reasonable defaults.
@@ -240,6 +254,14 @@
       }
       const worldDef = Levels.getWorld(this.currentLevel.world);
       this._reviewWords = null; // leaving any review level behind
+      // Boss levels are a duel: ONE oversized, hyper-aggressive boss and a
+      // translation challenge instead of the usual capture-a-bunch flow.
+      if (this.currentLevel.isBoss && !this.netMode) {
+        this.currentLevel.target = 1;
+        this.currentLevel.monsterCount = 1;
+        // Translating ~50 chars needs time; never below 150s.
+        this.currentLevel.timeLimit = Math.max(this.currentLevel.timeLimit || 60, 150);
+      }
       // Ensure view dimensions are initialized
       if (this.viewW === undefined) this._resize();
       this.world = new World(worldDef, this.currentLevel, this.viewW, this.viewH);
@@ -262,7 +284,10 @@
       this.fireCooldown = 0;
       // Limited ammo: enough bullets to capture the target plus a small
       // margin for wrong answers. Running dry before the target = lose.
-      this.ammo = this.currentLevel.target + 5 + (this._weaponStats().ammoBonus || 0);
+      // Boss duels give generous ammo — the translation can take several
+      // attempts and the boss must stay shootable the whole fight.
+      this.ammo = (this.currentLevel.isBoss ? 30 : this.currentLevel.target + 5) +
+        (this._weaponStats().ammoBonus || 0);
       this.player = new Player(this.world.width / 2, this.world.groundY - 60);
       this.paused = false;
 
@@ -271,9 +296,23 @@
       // render of such a monster throws (m.word.english), killing the
       // whole rAF loop.
       const eligible = this._eligibleWords();
-      this.monsters = eligible.length > 0
-        ? spawnMonsters(eligible, this.currentLevel.monsterCount, this.currentLevel.monsterSpeed, this.world.width, this.world.height, this._monsterScale())
-        : [];
+      if (this.currentLevel.isBoss && !this.netMode) {
+        // Boss duel: exactly one giant aggressive boss in the arena center.
+        const word = (eligible.length > 0 && Utils.randItem(eligible)) ||
+          { id: 'boss', english: 'BOSS', chinese: '大王', difficulty: this.currentLevel.difficulty || 1 };
+        this.monsters = [new Monster(
+          this.world.width / 2 + Utils.randInt(-80, 80),
+          this.world.height / 2 + Utils.randInt(-40, 40),
+          word, 'aggressive',
+          Math.max(1.1, this.currentLevel.monsterSpeed || 1.2),
+          1.8
+        )];
+        this._nudgeAwayFromPlayer(this.monsters);
+      } else {
+        this.monsters = eligible.length > 0
+          ? spawnMonsters(eligible, this.currentLevel.monsterCount, this.currentLevel.monsterSpeed, this.world.width, this.world.height, this._monsterScale())
+          : [];
+      }
 
       // Show level intro
       this._showLevelIntro();
@@ -282,7 +321,8 @@
     // Review level over the wrong-word book (错词本). Spawns exactly the
     // due words — one monster each — as a normal playable level whose
     // answers feed the spaced-repetition scheduler in wrongbook.js.
-    startReviewLevel() {
+    // Resolves true when the review level started (false = nothing due).
+    async startReviewLevel() {
       const due = (window.WrongBook && WrongBook.dueWords(10)) || [];
       if (!due.length) {
         Utils.toast('暂无需要复习的错词，先去闯关吧！');
@@ -299,6 +339,18 @@
       const staleModal = document.getElementById('question-modal');
       if (staleModal) staleModal.classList.add('hidden');
       this.activeMonster = null;
+
+      // Review questions want a distractor pool; on a fresh page the
+      // vocabulary may not be loaded yet (same guard as startLevel).
+      if (!this.words || this.words.length === 0) {
+        try {
+          this.vocabulary = await API.getVocabulary();
+          this.words = (this.vocabulary && this.vocabulary.words) || [];
+        } catch (e) {
+          this.vocabulary = null;
+          this.words = [];
+        }
+      }
 
       const maxD = due.reduce((m, w) => Math.max(m, Number(w.difficulty) || 1), 1);
       const cfg = {
@@ -360,7 +412,9 @@
         : (cfg.monsterName || (worldDef ? worldDef.name : '神秘关卡'));
       document.getElementById('level-intro-goal').textContent = isReview
         ? `复习 ${cfg.target} 个易错单词 (${cfg.timeLimit}秒)`
-        : `难度 d${cfg.difficulty} · 捕获 ${cfg.target} 只小怪 (${cfg.timeLimit}秒)`;
+        : cfg.isBoss
+          ? `翻译一篇中文小作文，击败 Boss！(${cfg.timeLimit}秒)`
+          : `难度 d${cfg.difficulty} · 捕获 ${cfg.target} 只小怪 (${cfg.timeLimit}秒)`;
       Utils.playBeep(cfg.isBoss ? 'boss' : 'click');
       this.showScreen('screen-level-intro');
     }
@@ -910,7 +964,7 @@
         if (!m.alive || m.captured || !m.word) continue;
         if (Utils.aabb(pBox, m.getHitbox())) {
           if (m.canMeleeAttack && m.canMeleeAttack()) {
-            m.resetMeleeCooldown();
+            m.resetMeleeCooldown(m.boss ? 350 : 500);
             this._damagePlayer(1, m.x, m.y);
             // knock the player away from the monster
             const dx = this.player.x - m.x;
@@ -982,6 +1036,8 @@
 
     // Pop the vocabulary question for a monster hit by a bullet. Correct =
     // capture + rewards; wrong = monster counterattacks and player loses HP.
+    // Boss duels (solo) swap the question for a Chinese→English translation
+    // of a ~50-char essay; one correct translation defeats the boss.
     async _engageMonster(m) {
       if (!m || !m.alive || m.captured || !m.word || m.isEngaged) return;
       m.isEngaged = true;
@@ -989,7 +1045,14 @@
       this.activeMonster = m;
       this.paused = true;
       this.state = GameState.PAUSED_QUESTION;
-      const result = await Question.show(m.word, this.words, { type: this._pickQuestionType(m.word) });
+      let result;
+      if (m.boss && !this.netMode && window.Essays && window.Essay) {
+        const essay = Essays.makeEssay((this.currentLevel && this.currentLevel.world) || 1);
+        result = await Essay.show(essay);
+        result.type = 'translate';
+      } else {
+        result = await Question.show(m.word, this.words, { type: this._pickQuestionType(m.word) });
+      }
       // endLevel() can run while the question is open. If the level resolved
       // during the question, bail without clobbering WIN/LOSE state.
       if (this.state !== GameState.PAUSED_QUESTION) {
@@ -1000,7 +1063,11 @@
       this.paused = false;
       this.state = GameState.PLAYING;
       m.isEngaged = false;
-      this._recordWordResult(m.word, result.correct);
+      // The translation isn't a vocabulary word — keep it out of the
+      // wrong-word book.
+      if (result.type !== 'translate') {
+        this._recordWordResult(m.word, result.correct);
+      }
 
       if (result.correct) {
         m.startCapture();
@@ -1124,15 +1191,17 @@
       Utils.playBeep('shoot');
     }
 
-    _monsterShoot(m) {
+    _monsterShoot(m, opts) {
+      opts = opts || {};
       const dx = this.player.x - m.x;
       const dy = this.player.y - m.y;
-      const mag = Math.hypot(dx, dy) || 1;
-      this.enemyProjectiles.push(new Projectile(m.x, m.y, dx / mag, dy / mag, {
+      const base = Math.atan2(dy, dx);
+      const ang = base + (opts.ang || 0);
+      this.enemyProjectiles.push(new Projectile(m.x, m.y, Math.cos(ang), Math.sin(ang), {
         owner: ProjectileOwner.MONSTER,
-        speed: 4.5,
+        speed: opts.speed || 4.5,
         radius: 9,
-        color: '#ff6b3d',
+        color: m.boss ? '#ff2d55' : '#ff6b3d',
         maxDist: 1400
       }));
     }
@@ -1347,11 +1416,21 @@
       // Remove dead monsters (post-capture)
       this.monsters = this.monsters.filter(m => m.alive);
 
-      // Monster ranged attacks (aggressive monsters shoot fireballs)
+      // Monster ranged attacks (aggressive monsters shoot fireballs).
+      // Boss monsters are far more ferocious: longer reach, twin
+      // fireballs per volley, faster projectiles, shorter cooldown.
       for (const m of this.monsters) {
-        if (!m.captured && m.canShoot && m.canShoot() && Utils.dist(m, this.player) < 320) {
-          this._monsterShoot(m);
-          m.resetShootTimer();
+        const bossMon = !!m.boss;
+        const range = bossMon ? 430 : 320;
+        if (!m.captured && m.canShoot && m.canShoot() && Utils.dist(m, this.player) < range) {
+          if (bossMon) {
+            this._monsterShoot(m, { speed: 5.5, ang: -0.2 });
+            this._monsterShoot(m, { speed: 5.5, ang: 0.2 });
+            m.shootTimer = 450;
+          } else {
+            this._monsterShoot(m);
+            m.resetShootTimer();
+          }
         }
       }
 
@@ -1371,8 +1450,10 @@
       // Respawn if too few (keep some pressure). Guard against an empty
       // word pool — spawnMonsters() with no words creates monsters with
       // word === undefined, whose render throws and kills the game loop.
-      // Net mode: the server owns respawn waves (spawn events).
-      if (!this.netMode && this.monsters.length < 3 && this.timeRemaining > 5) {
+      // Net mode: the server owns respawn waves (spawn events). Boss duels
+      // are a 1v1 — never respawn minions.
+      if (!this.netMode && !(this.currentLevel && this.currentLevel.isBoss) &&
+          this.monsters.length < 3 && this.timeRemaining > 5) {
         const eligible = this._eligibleWords();
         if (eligible.length > 0) {
           const more = spawnMonsters(eligible, 2, this.currentLevel.monsterSpeed, this.world.width, this.world.height, this._monsterScale());

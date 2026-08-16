@@ -2841,6 +2841,127 @@ html, body {
 }
 
 /* ============================================================
+   Boss translation modal (中文作文 → 英文翻译)
+   ============================================================ */
+
+.modal-card--translation {
+  max-width: 640px;
+  width: min(92vw, 640px);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.translation-essay {
+  font-family: var(--font-ui);
+  font-size: clamp(17px, 4vw, 21px);
+  line-height: 1.7;
+  color: var(--c-light);
+  background: rgba(0, 0, 0, 0.28);
+  border: 2px dashed rgba(254, 202, 87, 0.45);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin: 8px 0 10px;
+  text-align: left;
+}
+
+.translation-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-ui);
+  font-size: clamp(15px, 3.6vw, 18px);
+  line-height: 1.6;
+  color: var(--c-light);
+  background: rgba(0, 0, 0, 0.35);
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+  padding: 10px 12px;
+  resize: vertical;
+  outline: none;
+}
+
+.translation-input:focus {
+  border-color: var(--c-gold);
+  box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.25);
+}
+
+.translation-hint {
+  font-size: 12px;
+  color: var(--c-light);
+  opacity: 0.65;
+  margin: 6px 2px 8px;
+  text-align: left;
+}
+
+.translation-submit {
+  width: 100%;
+  font-size: clamp(17px, 4vw, 21px);
+  background: linear-gradient(180deg, var(--c-gold), #e0b400);
+  border-color: var(--c-darker);
+}
+
+.translation-feedback {
+  margin-top: 12px;
+  text-align: left;
+}
+
+.translation-verdict {
+  font-family: var(--font-game);
+  font-size: clamp(17px, 4vw, 21px);
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.translation-feedback.correct .translation-verdict { color: var(--c-green); }
+.translation-feedback.wrong .translation-verdict { color: var(--c-red); }
+
+.translation-line {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 4px 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.translation-line.pass { background: rgba(46, 213, 115, 0.12); }
+.translation-line.fail { background: rgba(255, 71, 87, 0.14); }
+
+.translation-line__mark {
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: var(--font-game);
+  font-size: 20px;
+}
+.translation-line.pass .translation-line__mark { color: var(--c-green); }
+.translation-line.fail .translation-line__mark { color: var(--c-red); }
+
+.translation-line__zh { color: var(--c-light); }
+
+.translation-line__en {
+  color: var(--c-yellow);
+  opacity: 0.9;
+}
+
+.translation-line__miss {
+  grid-column: 2;
+  color: #ff8a95;
+  font-size: 12.5px;
+}
+
+.translation-again {
+  margin-top: 8px;
+  padding: 8px 12px;
+  text-align: center;
+  font-size: 13.5px;
+  color: #ffb3ba;
+  border: 1px dashed rgba(255, 107, 61, 0.5);
+  border-radius: 10px;
+}
+
+/* ============================================================
    Wrong-word book screen (错词本)
    ============================================================ */
 

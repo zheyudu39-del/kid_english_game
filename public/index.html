@@ -65,6 +65,21 @@
       </div>
     </div>
 
+    <!-- Boss translation modal (paused while visible) -->
+    <div id="translation-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="translation-prompt">
+      <div class="modal-card modal-card--translation">
+        <div class="modal-monster" aria-hidden="true">👑</div>
+        <div class="modal-prompt" id="translation-prompt">Boss 发起挑战：把下面的中文小作文翻译成英文！</div>
+        <div class="translation-essay" id="translation-essay" aria-label="中文作文"></div>
+        <textarea id="translation-input" class="translation-input" rows="4" maxlength="400"
+          placeholder="在这里输入英文翻译…（写简单的句子也可以，提交后能看到参考答案）"
+          autocomplete="off" spellcheck="false" aria-label="英文翻译输入框"></textarea>
+        <div class="translation-hint">💡 提示：不会的单词可以用你知道的简单词代替 · Ctrl+Enter 提交</div>
+        <button id="translation-submit" class="big-btn translation-submit" type="button" aria-label="提交译文">📝 提交译文</button>
+        <div class="translation-feedback" id="translation-feedback" role="status" aria-live="assertive"></div>
+      </div>
+    </div>
+
     <!-- Title screen -->
     <div id="screen-title" class="screen screen--title">
       <div class="version-tag" aria-hidden="true">v2026.08.16-12</div>
@@ -547,6 +562,8 @@
   <script src="js/coin.js" defer></script>
   <script src="js/world.js" defer></script>
   <script src="js/question.js" defer></script>
+  <script src="js/essays.js" defer></script>
+  <script src="js/essay.js" defer></script>
   <script src="js/particle.js" defer></script>
   <script src="js/input.js" defer></script>
   <script src="js/projectile.js" defer></script>

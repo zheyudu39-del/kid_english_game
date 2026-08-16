@@ -180,10 +180,11 @@
     // ---- combat helpers (driven by game.js) ----
     // Attack cadence is intentionally brisk (melee every 0.5s, ranged every
     // 0.8s) to keep kids dodging; the 1.5s player invulnerability window is
-    // what actually caps damage taken.
+    // what actually caps damage taken. Bosses get their own shorter cadence
+    // via the optional ms argument.
     isAggressive() { return this.ai === AI.AGGRESSIVE; }
     canMeleeAttack() { return this.attackCooldown <= 0; }
-    resetMeleeCooldown() { this.attackCooldown = 500; }
+    resetMeleeCooldown(ms) { this.attackCooldown = ms || 500; }
     canShoot() { return this.isAggressive() && this.shootTimer <= 0; }
     resetShootTimer() { this.shootTimer = 800; }
 
