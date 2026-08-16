@@ -71,8 +71,8 @@ function check(name, ok, detail) {
     check(`[${c.name}] no horizontal overflow`, !geo.hScroll, geo.hScroll ? 'scrollWidth > viewport' : '');
     check(`[${c.name}] start button above toolbar`,
       geo.start && geo.toolbar && geo.start.bottom <= geo.toolbar.top + 1);
-    check(`[${c.name}] toolbar holds 6 secondary buttons`,
-      geo.toolbarBtns === 6, 'buttons=' + geo.toolbarBtns);
+    check(`[${c.name}] toolbar holds 7 secondary buttons`,
+      geo.toolbarBtns === 7, 'buttons=' + geo.toolbarBtns);
     check(`[${c.name}] toolbar packs into <=3 rows`, geo.toolbarRows <= 3, 'rows=' + geo.toolbarRows);
     check(`[${c.name}] no JS errors`, errors.length === 0, errors[0] || '');
     await page.close();

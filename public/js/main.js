@@ -194,6 +194,16 @@
     game.beginPlay();
   });
 
+  // ---- Growth-tree map ----
+  // map.js dispatches this after the user clicks an unlocked level node;
+  // funnel it through the same safe entry the title start button uses.
+  window.addEventListener('wordhunter:start-level', (e) => {
+    const lv = parseInt(e.detail && e.detail.level, 10);
+    if (!Number.isFinite(lv)) return;
+    if (nameInput && nameInput.value.trim()) game.playerName = nameInput.value.trim();
+    startLevelSafe(Math.max(1, Math.min(TOTAL, lv)));
+  });
+
   // ---- Result screen buttons ----
   addClickOnce(document.getElementById('btn-next-level'), () => {
     const next = game.currentLevelNum + 1;
@@ -206,6 +216,12 @@
   });
 
   addClickOnce(document.getElementById('btn-replay'), () => {
+    // After a review round, "replay" means another batch from the book
+    // (there is no real level number behind it).
+    if (game.currentLevel && game.currentLevel.isReview) {
+      game.startReviewLevel();
+      return;
+    }
     startLevelSafe(game.currentLevelNum);
   });
 
@@ -247,6 +263,7 @@
     if (game.input && typeof game.input.setLocked === 'function') game.input.setLocked(false);
     game.showScreen('screen-title');
     game.showHUD(false);
+    if (window.Sound && Sound.playBgm) Sound.playBgm('menu');
     // Re-render save info
     updateStartButton();
   }
@@ -260,6 +277,10 @@
 
   // Show initial save info
   updateStartButton();
+
+  // Menu music. Browsers block audio before the first user gesture, so
+  // sound.js defers the actual start until then (playBgm records intent).
+  if (window.Sound && Sound.playBgm) Sound.playBgm('menu');
 
   // Re-run updateStartButton after a short delay so that the (async)
   // restoreSession() in register.js — which may pull maxUnlocked from

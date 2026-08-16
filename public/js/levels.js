@@ -84,6 +84,16 @@
   //   timeLimit    : 60 + floor(level/30)  (capped 180s)
   //   monsterCount : 6 + floor(level/25)   (capped 32)
   //   monsterSpeed : 0.6 + level*0.005     (capped 3.6)
+  // Boss levels (every 10th + each world's final level, mirroring the
+  // server's buildLevelConfig) trade a slightly higher capture quota for
+  // fewer, slower, bigger monsters — a "boss rush" feel instead of a crowd.
+  function isBossLevel(levelNum) {
+    const lvl = Number(levelNum);
+    if (!Number.isFinite(lvl) || lvl < 1) return false;
+    const progress = (((Math.min(TOTAL_LEVELS, Math.floor(lvl)) - 1) % LEVELS_PER_WORLD) + 1);
+    return progress === LEVELS_PER_WORLD || progress % 10 === 0;
+  }
+
   function battleParamsFor(levelNum) {
     // Handle invalid inputs (null, undefined, NaN, non-numeric)
     const lvlNum = Number(levelNum);
@@ -96,12 +106,18 @@
       };
     }
     const lvl = Math.max(1, Math.min(TOTAL_LEVELS, Math.floor(lvlNum)));
-    return {
+    const base = {
       target:       Math.min(18, 5 + Math.floor(lvl / 40)),
       timeLimit:    Math.min(180, 60 + Math.floor(lvl / 30) * 5),
       monsterCount: Math.min(32, 6 + Math.floor(lvl / 25)),
       monsterSpeed: Math.min(3.6, 0.6 + lvl * 0.005)
     };
+    if (isBossLevel(lvl)) {
+      base.target = Math.min(20, base.target + 1);
+      base.monsterCount = Math.max(5, base.monsterCount - 4);
+      base.monsterSpeed = base.monsterSpeed * 0.85;
+    }
+    return base;
   }
 
   // Fetch and cache the full 666-level list. Idempotent: concurrent
@@ -170,7 +186,7 @@
     const meta = _byNumber && _byNumber.get(levelNum);
     const world = meta ? meta.world : Math.min(6, Math.ceil(levelNum / LEVELS_PER_WORLD));
     const worldProgress = ((levelNum - 1) % LEVELS_PER_WORLD) + 1;
-    const isBoss = worldProgress === LEVELS_PER_WORLD;
+    const isBoss = meta ? !!meta.isBoss : isBossLevel(levelNum);
     const difficulty = meta ? meta.difficulty : Math.min(8, Math.max(1, Math.round(1 + Math.pow((levelNum - 1) / (TOTAL_LEVELS - 1), 0.85) * 7)));
     const monsterType = meta ? meta.monsterType : 'word-recognition';
     const band = bandForDifficulty(difficulty);
@@ -182,7 +198,7 @@
       isBoss,
       difficulty,
       monsterType,
-      monsterHP: levelNum * 2 + 10,
+      monsterHP: isBoss ? (levelNum * 2 + 10) * 3 : levelNum * 2 + 10,
       monsterName: '',
       // Mirror buildLevelConfig() in server.js so the offline fallback
       // shows the same coins/XP as the server would award.
@@ -192,8 +208,10 @@
       }
     }, battle, band, {
       // Preserve explicit overrides last so the API / fallback wins.
-      monsterName: meta && meta.isBoss
-        ? ['森林领主','海洋领主','火山领主','雪山领主','天空领主','星空领主'][world - 1]
+      monsterName: isBoss
+        ? (worldProgress === LEVELS_PER_WORLD
+            ? ['森林领主','海洋领主','火山领主','雪山领主','天空领主','星空领主'][world - 1]
+            : ['森林守卫','海洋守卫','火山守卫','雪山守卫','天空守卫','星空守卫'][world - 1] + (worldProgress / 10))
         : '小怪'
     });
   }
@@ -234,6 +252,7 @@
     WORLDS,
     TOTAL_LEVELS,
     LEVELS_PER_WORLD,
+    isBossLevel,
     loadAll,
     getWorld,
     getLevel,

@@ -41,7 +41,7 @@
   }
 
   class Monster {
-    constructor(x, y, word, aiType, speed) {
+    constructor(x, y, word, aiType, speed, scale) {
       this.x = x;
       this.y = y;
       this.spawnX = x;
@@ -49,6 +49,10 @@
       this.word = word;                 // { id, english, chinese, emoji, ... }
       this.ai = aiType || AI.WANDER;
       this.speed = speed || 0.8;
+      // Boss monsters spawn at a larger scale (visual + hitbox). Clamped so
+      // a bad config can never make a monster cover the whole arena.
+      this.scale = Math.max(0.8, Math.min(1.8, Number(scale) || 1));
+      this.boss = this.scale >= 1.2;
       this.dir = { x: Utils.randFloat(-1, 1), y: Utils.randFloat(-1, 1) };
       this.normalize();
       this.bodyColor = Utils.randItem(BODY_COLORS);
@@ -73,12 +77,17 @@
       this.dir.x /= m; this.dir.y /= m;
     }
 
+    // Scaled body size — boss monsters are bigger in every dimension
+    // (visual, hitbox, world clamping) than regular ones.
+    get size() { return SIZE * this.scale; }
+    get hitbox() { return HITBOX * this.scale; }
+
     // Keep the patrol target inside the world. A monster spawned near an
     // edge gets a target outside the world; without clamping it walks into
     // the wall, bounces, and re-aims at the unreachable target forever.
     clampPatrolTarget(worldW, worldH) {
-      this.patrolTarget.x = Utils.clamp(this.patrolTarget.x, SIZE / 2, worldW - SIZE / 2);
-      this.patrolTarget.y = Utils.clamp(this.patrolTarget.y, SIZE / 2, worldH - SIZE / 2);
+      this.patrolTarget.x = Utils.clamp(this.patrolTarget.x, this.size / 2, worldW - this.size / 2);
+      this.patrolTarget.y = Utils.clamp(this.patrolTarget.y, this.size / 2, worldH - this.size / 2);
     }
 
     update(dtMs, player, worldW, worldH) {
@@ -127,8 +136,8 @@
         if (d < 10) {
           // Clamp patrol target to world bounds
           this.patrolTarget = {
-            x: Utils.clamp(this.spawnX + Utils.randInt(-150, 150), SIZE/2, worldW - SIZE/2),
-            y: Utils.clamp(this.spawnY + Utils.randInt(-150, 150), SIZE/2, worldH - SIZE/2)
+            x: Utils.clamp(this.spawnX + Utils.randInt(-150, 150), this.size/2, worldW - this.size/2),
+            y: Utils.clamp(this.spawnY + Utils.randInt(-150, 150), this.size/2, worldH - this.size/2)
           };
         }
         const dx = this.patrolTarget.x - this.x;
@@ -152,7 +161,7 @@
       this.y += this.dir.y * move;
 
       // Soft world bounds: bounce off edges
-      const margin = SIZE/2;
+      const margin = this.size/2;
       if (this.x < margin)       { this.x = margin;       this.dir.x = Math.abs(this.dir.x); }
       if (this.x > worldW-margin){ this.x = worldW-margin;this.dir.x = -Math.abs(this.dir.x); }
       if (this.y < margin)       { this.y = margin;       this.dir.y = Math.abs(this.dir.y); }
@@ -165,7 +174,7 @@
     }
 
     getHitbox() {
-      return { x: this.x, y: this.y, w: HITBOX, h: HITBOX };
+      return { x: this.x, y: this.y, w: this.hitbox, h: this.hitbox };
     }
 
     // ---- combat helpers (driven by game.js) ----
@@ -205,14 +214,24 @@
       // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.beginPath();
-      ctx.ellipse(this.x, this.y + SIZE/2 - 2, SIZE/2.4, 5, 0, 0, Math.PI * 2);
+      ctx.ellipse(this.x, this.y + this.size/2 - 2, this.size/2.4, 5 * this.scale, 0, 0, Math.PI * 2);
       ctx.fill();
+
+      // Boss aura: pulsing ring so boss monsters read instantly.
+      if (this.boss) {
+        const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 260);
+        ctx.strokeStyle = 'rgba(255, 71, 87, ' + (0.35 + 0.3 * pulse).toFixed(2) + ')';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y - 2, this.size * 0.72, this.size * 0.62, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       // Solid vector body (outlined creature, no emoji)
       this._drawBody(ctx);
 
       // Word label below
-      const labelY = this.y + SIZE/2 + 12;
+      const labelY = this.y + this.size/2 + 12;
       // Pill background
       ctx.font = 'bold 14px "Nunito", system-ui, sans-serif';
       // Defensive guard: never let a missing/malformed word crash the
@@ -248,6 +267,14 @@
         ctx.fillText('🔒', this.x - 14, this.y - 22);
       }
 
+      // Crown above boss monsters (after body so it sits on top).
+      if (this.boss) {
+        ctx.font = Math.round(16 * this.scale) + 'px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('👑', this.x, this.y - this.size * 0.62 - 4);
+      }
+
       // Stun indicator
       if (this.stunned > 0) {
         ctx.font = '18px serif';
@@ -264,7 +291,7 @@
     // so the monster reads as a solid, grounded creature.
     _drawBody(ctx) {
       const x = this.x, y = this.y;
-      const s = SIZE / 44;   // design at 44 units, scaled
+      const s = (SIZE / 44) * this.scale;   // design at 44 units, scaled
       const OUT = '#2b1a12'; // unified outline (matches the player)
       const c = this.bodyColor || BODY_COLORS[0];
       ctx.lineJoin = 'round';
@@ -333,7 +360,7 @@
   }
 
   // Spawn N monsters for a level, distributed across the world
-  function spawnMonsters(words, count, speed, worldW, worldH) {
+  function spawnMonsters(words, count, speed, worldW, worldH, scale) {
     const aiTypes = [AI.WANDER, AI.WANDER, AI.PATROL, AI.AGGRESSIVE];
     const monsters = [];
     const minDist = 80;
@@ -372,7 +399,7 @@
 
       const word = Utils.randItem(validWords);
       const ai = Utils.randItem(aiTypes);
-      monsters.push(new Monster(x, y, word, ai, speed));
+      monsters.push(new Monster(x, y, word, ai, speed, scale));
     }
 
     return monsters;

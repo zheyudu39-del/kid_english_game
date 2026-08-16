@@ -290,6 +290,7 @@
     const screen = el('screen-mp');
     if (screen) screen.classList.remove('hidden');
     renderRoom();
+    if (window.Sound && Sound.playBgm) Sound.playBgm('menu');
   }
 
   function backToTitle() {
@@ -305,6 +306,7 @@
       g.showScreen('screen-title');
       g.showHUD(false);
     }
+    if (window.Sound && Sound.playBgm) Sound.playBgm('menu');
   }
 
   // ---- net events ----
@@ -322,12 +324,14 @@
     Net.on('countdown', (msg) => {
       const hint = el('mp-hint');
       if (hint && msg.n > 0) hint.textContent = '匹配成功！' + msg.n + ' 秒后开始对战…';
+      if (msg.n > 0 && window.Sound) window.Sound.play('countdown', { final: msg.n === 1 });
     });
 
     Net.on('start', (msg) => {
       const screen = el('screen-mp');
       if (screen) screen.classList.add('hidden');
       closeJoinModal();
+      if (window.Sound) window.Sound.play('matchStart');
       const g = game();
       if (g && typeof g.startLevelNet === 'function') {
         g.startLevelNet(msg, myId);

@@ -201,6 +201,13 @@
       return request('/api/leaderboard/levels?' + qs.toString());
     },
 
+    // ---- Parent report ----
+    // Aggregated learning stats for one player (sessions, accuracy, play
+    // time). Word-level 错词本 data is local and merged client-side.
+    getReport(nickname) {
+      return request('/api/report/' + encodeURIComponent(nickname));
+    },
+
     // Shop action endpoints write to the caller's profile, so the session
     // token (attached by request()) is what authorizes them.
 

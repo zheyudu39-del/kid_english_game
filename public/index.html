@@ -62,6 +62,8 @@
       <div class="modal-card">
         <div class="modal-monster" id="modal-monster" aria-hidden="true">👾</div>
         <div class="modal-word" id="modal-word">—</div>
+        <div class="modal-sub hidden" id="modal-sub"></div>
+        <button id="modal-replay" class="modal-replay hidden" type="button" aria-label="再听一次单词发音">🔊 再听一次</button>
         <div class="modal-prompt" id="modal-prompt">选出正确的中文意思</div>
         <div class="modal-options" id="modal-options" role="listbox" aria-label="答案选项"></div>
         <div class="modal-feedback" id="modal-feedback" role="status" aria-live="assertive"></div>
@@ -70,7 +72,7 @@
 
     <!-- Title screen -->
     <div id="screen-title" class="screen screen--title">
-      <div class="version-tag" aria-hidden="true">v2026.08.16-9</div>
+      <div class="version-tag" aria-hidden="true">v2026.08.16-12</div>
       <div class="title-bg" aria-hidden="true">
         <div class="title-bg__clouds"></div>
         <div class="title-bg__ground"></div>
@@ -181,6 +183,10 @@
               </button>
             </div>
             <div class="mode-buttons">
+              <button id="btn-map" class="big-btn map-entry-btn" type="button" aria-label="成长地图">
+                <span class="btn-emoji" aria-hidden="true">🌳</span>
+                <span>地图</span>
+              </button>
               <button id="btn-multiplayer" class="big-btn mp-entry-btn" type="button" aria-label="联机对战">
                 <span class="btn-emoji" aria-hidden="true">⚔️</span>
                 <span>联机</span>
@@ -192,6 +198,15 @@
               <button id="btn-shop" class="big-btn shop-btn" type="button" aria-label="打开商城">
                 <span class="btn-emoji" aria-hidden="true">🛒</span>
                 <span>商城</span>
+              </button>
+              <button id="btn-wrongbook" class="big-btn wb-entry-btn" type="button" aria-label="错词本">
+                <span class="btn-emoji" aria-hidden="true">📕</span>
+                <span>错词本</span>
+                <span class="wb-badge hidden" id="wb-badge" aria-live="polite"></span>
+              </button>
+              <button id="btn-report" class="big-btn rp-entry-btn" type="button" aria-label="学习报告">
+                <span class="btn-emoji" aria-hidden="true">📊</span>
+                <span>报告</span>
               </button>
             </div>
           </div>
@@ -309,6 +324,39 @@
         <div class="board-me" id="board-me" aria-label="我的排名"></div>
         <div class="board-table" id="board-table" role="list" aria-label="排行榜列表"></div>
         <div class="board-foot" id="board-foot">按通关关卡数排名</div>
+      </div>
+    </div>
+
+    <!-- 错词本 (wrong-word book + review entry) -->
+    <div id="screen-wrongbook" class="screen screen--board hidden">
+      <div class="board-panel wb-panel">
+        <div class="board-header">
+          <h2 class="board-title">📕 错词本</h2>
+          <button id="btn-wb-clear" class="board-refresh" type="button" aria-label="清空错词本">🗑️</button>
+          <button id="btn-wb-close" class="close-modal-btn" aria-label="关闭错词本">✕</button>
+        </div>
+        <div class="wb-stats" id="wb-stats"></div>
+        <div class="wb-list" id="wb-list" role="list" aria-label="错词列表"></div>
+        <div class="wb-actions">
+          <button id="btn-review-start" class="big-btn review-start-btn" type="button" aria-label="开始复习">🔁 开始复习</button>
+        </div>
+        <div class="board-foot">答错 3 次连对的单词会从本子里毕业 ✨ · 复习关会轮换四种题型</div>
+      </div>
+    </div>
+
+    <!-- 学习报告 (parent report) -->
+    <div id="screen-report" class="screen screen--board hidden">
+      <div class="board-panel rp-panel">
+        <div class="board-header">
+          <h2 class="board-title">📊 学习报告</h2>
+          <button id="btn-rp-refresh" class="board-refresh" type="button" aria-label="刷新报告">🔄</button>
+          <button id="btn-rp-close" class="close-modal-btn" aria-label="关闭报告">✕</button>
+        </div>
+        <div class="rp-who" id="rp-who"></div>
+        <div class="rp-cards" id="rp-cards"></div>
+        <div class="rp-trend" id="rp-trend"></div>
+        <div class="rp-words" id="rp-words"></div>
+        <div class="rp-sessions" id="rp-sessions"></div>
       </div>
     </div>
 
@@ -462,6 +510,30 @@
     <!-- Toast notifications -->
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
+    <!-- Floating sound toggle (works on every screen; also press M) -->
+    <button id="btn-sound-toggle" class="sound-toggle" type="button" aria-label="关闭音效" aria-pressed="false">🔊</button>
+
+    <!-- Growth tree level map -->
+    <div id="screen-map" class="screen screen--map hidden">
+      <div class="map-panel">
+        <div class="map-header">
+          <h2 class="map-title">🌳 成长大树</h2>
+          <div class="map-progress" id="map-progress" aria-live="polite"></div>
+          <button id="btn-map-close" class="close-modal-btn" aria-label="关闭地图">✕</button>
+        </div>
+        <div class="map-scroll" id="map-scroll">
+          <div class="map-tree" id="map-tree"><!-- generated by map.js --></div>
+        </div>
+        <div class="map-legend">
+          <span><i class="lg lg--done"></i>已通关</span>
+          <span><i class="lg lg--now"></i>当前关卡</span>
+          <span><i class="lg lg--lock"></i>未解锁</span>
+          <span><i class="lg lg--boss">👑</i>Boss 关卡</span>
+          <span class="map-legend__tip">滚轮或按住拖动可以上下滑动大树 · 点击关卡立即出发</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Confetti / particles layer -->
     <canvas id="fx-canvas" class="fx-canvas"></canvas>
   </div>
@@ -469,10 +541,12 @@
   <!-- Scripts are loaded with `defer` so they execute in order after
        HTML parsing is done, without blocking the initial paint. -->
   <script src="js/utils.js" defer></script>
+  <script src="js/sound.js" defer></script>
   <script src="js/api.js" defer></script>
   <script src="js/tts.js" defer></script>
   <script src="js/levels.js" defer></script>
   <script src="js/shop.js" defer></script>
+  <script src="js/wrongbook.js" defer></script>
   <script src="js/player.js" defer></script>
   <script src="js/monster.js" defer></script>
   <script src="js/coin.js" defer></script>
@@ -485,7 +559,9 @@
   <script src="js/register.js" defer></script>
   <script src="js/net.js" defer></script>
   <script src="js/mp.js" defer></script>
+  <script src="js/map.js" defer></script>
   <script src="js/leaderboard.js" defer></script>
+  <script src="js/report.js" defer></script>
   <script src="js/main.js" defer></script>
 </body>
 </html>

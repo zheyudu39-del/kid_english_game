@@ -433,7 +433,11 @@ function buildLevelConfig(levelNum) {
   const level = Math.max(1, Math.min(TOTAL_LEVELS, parseInt(levelNum, 10) || 1));
   const world = worldOfLevel(level);
   const worldProgress = ((level - 1) % LEVELS_PER_WORLD) + 1;
-  const isBoss = worldProgress === LEVELS_PER_WORLD; // last level of each world
+  // Boss cadence: a "guard" boss every 10th level inside a world plus the
+  // "lord" boss closing each world (worldProgress 111) — 12 per world, 72
+  // across the game, so the growth tree has regular boss milestones.
+  const isWorldFinal = worldProgress === LEVELS_PER_WORLD;
+  const isBoss = isWorldFinal || worldProgress % 10 === 0;
   const difficulty = difficultyOfLevel(level);
 
   // Monster HP scales with level
@@ -453,7 +457,7 @@ function buildLevelConfig(levelNum) {
   };
   const namePool = monsterNames[monsterType] || ['神秘怪'];
   const monsterName = isBoss
-    ? `${['森林','海洋','火山','雪山','天空','星空'][world-1]}领主`
+    ? `${['森林','海洋','火山','雪山','天空','星空'][world-1]}${isWorldFinal ? '领主' : '守卫' + (worldProgress / 10)}`
     : namePool[(level - 1) % namePool.length];
 
   // Reward
@@ -739,10 +743,12 @@ app.get('/api/scores/:nickname', (req, res) => {
 app.post('/api/scores', validateScore, (req, res) => {
   const { nickname, score, ageGroup, gameMode, category } = req.body;
 
-  // roundsPlayed / correctCount are informational stats — clamp them so a
-  // crafted payload can't store negative numbers, strings, or huge values.
+  // roundsPlayed / correctCount / playSec are informational stats — clamp
+  // them so a crafted payload can't store negative numbers, strings, or
+  // huge values.
   const roundsPlayed = Math.min(100, Math.max(1, Math.floor(Number(req.body.roundsPlayed)) || 10));
   const correctCount = Math.min(roundsPlayed, Math.max(0, Math.floor(Number(req.body.correctCount)) || 0));
+  const playSec = Math.min(7200, Math.max(0, Math.floor(Number(req.body.playSec)) || 0));
   // Category is free-form: strip HTML metacharacters and cap length so a
   // malicious value can never become a stored-XSS payload.
   const cleanCategory = typeof category === 'string'
@@ -758,7 +764,8 @@ app.post('/api/scores', validateScore, (req, res) => {
     category: cleanCategory,
     date: new Date().toISOString(),
     roundsPlayed,
-    correctCount
+    correctCount,
+    playSec
   };
 
   const data = loadScores();
@@ -771,6 +778,68 @@ app.post('/api/scores', validateScore, (req, res) => {
     res.status(201).json({ success: true, id: entry.id });
   }).catch(err => {
     res.status(500).json({ error: '保存失败: ' + err.message });
+  });
+});
+
+// ---------------------------------------------------------------- report
+// GET /api/report/:nickname  ->  parent-facing learning report.
+// Pure aggregation over data the server already keeps (scores.json session
+// rows + players.json profile) — no new storage, nothing written. Word-level
+// detail (错词本) lives in the player's browser and is merged client-side.
+
+app.get('/api/report/:nickname', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) {
+    return res.status(400).json({ error: '昵称格式不合法' });
+  }
+
+  // Session rows for this player, newest first.
+  const entries = loadScores().scores
+    .filter(s => s.nickname === nickname)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  let totalRounds = 0, totalCorrect = 0, totalPlaySec = 0;
+  const playDays = new Set();
+  for (const e of entries) {
+    totalRounds += e.roundsPlayed || 0;
+    totalCorrect += e.correctCount || 0;
+    totalPlaySec += e.playSec || 0;
+    playDays.add(String(e.date).slice(0, 10));
+  }
+
+  // Registered profile (if any) contributes cleared-level data. Guests
+  // still get a full session report — only the profile card is absent.
+  const player = loadPlayers().players[nickname];
+  const profile = (player && player.passwordHash) ? {
+    cleared: Array.isArray(player.completedLevels) ? player.completedLevels.length : 0,
+    maxLevel: (typeof player.maxLevel === 'number' && Number.isFinite(player.maxLevel)) ? player.maxLevel : 1,
+    coins: (typeof player.coins === 'number' && Number.isFinite(player.coins)) ? player.coins : 0,
+    age: (typeof player.age === 'number') ? player.age : null,
+    lastPlayAt: typeof player.lastPlayAt === 'string' ? player.lastPlayAt : ''
+  } : null;
+
+  res.json({
+    nickname,
+    hasAccount: !!profile,
+    profile,
+    totals: {
+      sessions: entries.length,
+      rounds: totalRounds,
+      correct: totalCorrect,
+      accuracy: totalRounds > 0 ? Math.round((totalCorrect / totalRounds) * 100) : 0,
+      playSec: totalPlaySec,
+      playDays: playDays.size,
+      firstPlay: entries.length ? entries[entries.length - 1].date : '',
+      lastPlay: entries.length ? entries[0].date : ''
+    },
+    // Most recent sessions (chart + list), oldest → newest for plotting.
+    sessions: entries.slice(0, 30).reverse().map(e => ({
+      date: e.date,
+      score: e.score,
+      rounds: e.roundsPlayed || 0,
+      correct: e.correctCount || 0,
+      playSec: e.playSec || 0
+    }))
   });
 });
 

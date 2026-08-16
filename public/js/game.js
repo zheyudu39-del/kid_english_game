@@ -64,6 +64,9 @@
       // For initial question
       this.activeMonster = null;
 
+      // Review-level word pool (wrong-word book); null on normal levels.
+      this._reviewWords = null;
+
       // Multiplayer (versus race) state. In net mode the server owns the
       // spawns / engagement locks / answer verdicts / match end; this loop
       // only simulates the local view and relays events.
@@ -236,6 +239,7 @@
         if (!this.currentLevel.reward) this.currentLevel.reward = 0;
       }
       const worldDef = Levels.getWorld(this.currentLevel.world);
+      this._reviewWords = null; // leaving any review level behind
       // Ensure view dimensions are initialized
       if (this.viewW === undefined) this._resize();
       this.world = new World(worldDef, this.currentLevel, this.viewW, this.viewH);
@@ -247,6 +251,7 @@
       this.maxCombo = 0;
       this.captured = 0;
       this.timeRemaining = this.currentLevel.timeLimit;
+      this._lowTimeWarned = false;
       // Clear existing entities to prevent memory leaks
       this.monsters.forEach(m => { if (m.cleanup) m.cleanup(); });
       this.monsters = [];
@@ -267,24 +272,96 @@
       // whole rAF loop.
       const eligible = this._eligibleWords();
       this.monsters = eligible.length > 0
-        ? spawnMonsters(eligible, this.currentLevel.monsterCount, this.currentLevel.monsterSpeed, this.world.width, this.world.height)
+        ? spawnMonsters(eligible, this.currentLevel.monsterCount, this.currentLevel.monsterSpeed, this.world.width, this.world.height, this._monsterScale())
         : [];
 
       // Show level intro
       this._showLevelIntro();
     }
 
+    // Review level over the wrong-word book (错词本). Spawns exactly the
+    // due words — one monster each — as a normal playable level whose
+    // answers feed the spaced-repetition scheduler in wrongbook.js.
+    startReviewLevel() {
+      const due = (window.WrongBook && WrongBook.dueWords(10)) || [];
+      if (!due.length) {
+        Utils.toast('暂无需要复习的错词，先去闯关吧！');
+        return false;
+      }
+      // Leave any versus state behind (mirrors startLevel()).
+      this.netMode = false;
+      this.myNetId = null;
+      this.remotePlayers = new Map();
+      this.mpCounts = new Map();
+      this._mpKnockedOut = false;
+      this._updateMpHud();
+      this._cancelPendingEnds();
+      const staleModal = document.getElementById('question-modal');
+      if (staleModal) staleModal.classList.add('hidden');
+      this.activeMonster = null;
+
+      const maxD = due.reduce((m, w) => Math.max(m, Number(w.difficulty) || 1), 1);
+      const cfg = {
+        level: 0,
+        world: 1,
+        isReview: true,
+        difficulty: maxD,
+        monsterHP: 3,
+        monsterName: '错词小怪',
+        monsterCount: due.length,
+        monsterSpeed: 1.2,
+        target: due.length,
+        timeLimit: 60 + due.length * 12,
+        reward: { coins: 0, xp: 0 },
+        isBoss: false
+      };
+      this.currentLevelNum = 0;
+      this.currentLevel = cfg;
+      this._reviewWords = due;
+
+      const worldDef = Levels.getWorld(cfg.world);
+      if (this.viewW === undefined) this._resize();
+      this.world = new World(worldDef, cfg, this.viewW, this.viewH);
+      this.hp = this.maxHp;
+      this.score = 0;
+      this.combo = 0;
+      this.maxCombo = 0;
+      this.captured = 0;
+      this.timeRemaining = cfg.timeLimit;
+      this._lowTimeWarned = false;
+      this.monsters.forEach(m => { if (m.cleanup) m.cleanup(); });
+      this.monsters = [];
+      this.coinList = [];
+      this.bullets = [];
+      this.enemyProjectiles = [];
+      this.fireCooldown = 0;
+      this.ammo = cfg.target + 5 + (this._weaponStats().ammoBonus || 0);
+      this.player = new Player(this.world.width / 2, this.world.groundY - 60);
+      this.paused = false;
+      // spawnMonsters() samples words WITH replacement; overwrite each
+      // monster's word so every due word appears exactly once.
+      this.monsters = spawnMonsters(due, due.length, cfg.monsterSpeed, this.world.width, this.world.height, this._monsterScale());
+      this.monsters.forEach((m, i) => { m.word = due[i % due.length]; });
+      this._showLevelIntro();
+      return true;
+    }
+
     _showLevelIntro() {
       this.state = GameState.LEVEL_INTRO;
       const worldDef = Levels.getWorld(this.currentLevel.world);
       const cfg = this.currentLevel;
-      document.getElementById('level-intro-emoji').textContent = cfg.isBoss ? '👑' : (worldDef ? worldDef.emoji : '🌲');
-      const tag = cfg.isBoss ? ' 👑BOSS' : '';
-      document.getElementById('level-intro-num').textContent = `第 ${this.currentLevelNum} 关${tag}`;
-      document.getElementById('level-intro-name').textContent = cfg.monsterName
-        || (worldDef ? worldDef.name : '神秘关卡');
-      document.getElementById('level-intro-goal').textContent =
-        `难度 d${cfg.difficulty} · 捕获 ${cfg.target} 只小怪 (${cfg.timeLimit}秒)`;
+      const isReview = !!cfg.isReview;
+      document.getElementById('level-intro-emoji').textContent = isReview ? '📕' : (cfg.isBoss ? '👑' : (worldDef ? worldDef.emoji : '🌲'));
+      document.getElementById('level-intro-num').textContent = isReview
+        ? '错词复习'
+        : `第 ${this.currentLevelNum} 关${cfg.isBoss ? ' 👑BOSS' : ''}`;
+      document.getElementById('level-intro-name').textContent = isReview
+        ? '错词小怪出没！'
+        : (cfg.monsterName || (worldDef ? worldDef.name : '神秘关卡'));
+      document.getElementById('level-intro-goal').textContent = isReview
+        ? `复习 ${cfg.target} 个易错单词 (${cfg.timeLimit}秒)`
+        : `难度 d${cfg.difficulty} · 捕获 ${cfg.target} 只小怪 (${cfg.timeLimit}秒)`;
+      Utils.playBeep(cfg.isBoss ? 'boss' : 'click');
       this.showScreen('screen-level-intro');
     }
 
@@ -295,6 +372,9 @@
       this._renderItemBar();
       this._updateMpHud();
       this.state = GameState.PLAYING;
+      if (window.Sound && Sound.playBgm) {
+        Sound.playBgm((this.currentLevel && this.currentLevel.isBoss) ? 'boss' : 'level');
+      }
       Utils.playBeep('click');
     }
 
@@ -332,6 +412,8 @@
       if (itemBar) itemBar.classList.add('hidden');
       this.state = won ? GameState.WIN : GameState.LOSE;
       this.activeMonster = null;
+      // Clear the stage music so the win/lose jingle plays by itself.
+      if (window.Sound && Sound.stopBgm) Sound.stopBgm();
 
       // endLevel can fire while a question modal is still open (the 600ms
       // capture timer outlives a follow-up collision). Hide it so it
@@ -339,8 +421,9 @@
       const qm = document.getElementById('question-modal');
       if (qm) qm.classList.add('hidden');
 
-      // Unlock next level + persist locally (sync, before any network I/O)
-      if (won) {
+      // Unlock next level + persist locally (sync, before any network I/O).
+      // Review levels have no level number to unlock and nothing to persist.
+      if (won && !(this.currentLevel && this.currentLevel.isReview)) {
         const cap = Levels.TOTAL_LEVELS;
         this.maxUnlocked = Math.max(this.maxUnlocked, Math.min(cap, this.currentLevelNum + 1));
         this.maxUnlocked = Math.min(this.maxUnlocked, cap);
@@ -361,7 +444,34 @@
       document.getElementById('result-score-lose').textContent = this.score;
       document.getElementById('result-captured-lose').textContent = this.captured;
       this.showScreen(won ? 'screen-win' : 'screen-lose');
-      if (won) Utils.playBeep('win');
+      if (won) Utils.playBeep(this.currentLevel.isBoss ? 'bossDown' : 'win');
+      else Utils.playBeep('lose');
+
+      // Review levels are a local study aid: no level to unlock, no server
+      // progress / score rows (level 0 isn't a real level), no reward coins.
+      // Instead, re-label the result buttons for another review round and
+      // refresh the badge.
+      if (this.currentLevel.isReview) {
+        const nextBtn = document.getElementById('btn-next-level');
+        if (nextBtn) nextBtn.classList.add('hidden');
+        const replayBtn = document.getElementById('btn-replay');
+        if (replayBtn) replayBtn.textContent = '再复习一轮';
+        document.querySelector('#screen-win h2').textContent = '复习完成!';
+        if (window.WrongBook) WrongBook.refreshBadge();
+        return;
+      }
+      // Restore the normal result-screen labels after any review run.
+      const nextBtn = document.getElementById('btn-next-level');
+      if (nextBtn) nextBtn.classList.remove('hidden');
+      const replayBtn = document.getElementById('btn-replay');
+      if (replayBtn) replayBtn.textContent = '重玩';
+      document.querySelector('#screen-win h2').textContent = '关卡完成!';
+
+      // Time actually spent in the level (for the parent report). Clamped:
+      // the countdown can overshoot slightly on laggy frames and a stuck
+      // tab must not report hours.
+      const playSec = Math.round(Math.min(600, Math.max(5,
+        (this.currentLevel.timeLimit || 60) - this.timeRemaining)));
 
       // Backend submissions (best-effort, after the screen is up)
       if (!won) {
@@ -396,13 +506,22 @@
             await API.submitScore({
               nickname: this.playerName, score: this.score, ageGroup: this.ageGroup,
               gameMode: 'word-hunter', category: 'mixed',
-              roundsPlayed: this.captured, correctCount: this.captured
+              roundsPlayed: this.captured, correctCount: this.captured,
+              playSec
             });
             submitted = true;
           } catch (e) {}
           if (submitted) {
             try { sessionStorage.setItem(submissionKey, 'true'); } catch (e) {}
           }
+        }
+      }
+
+      // Nudge toward the wrong-word book once a review batch is ready.
+      if (window.WrongBook && !this.netMode) {
+        const due = WrongBook.stats().due;
+        if (due >= WrongBook.REVIEW_HINT_THRESHOLD) {
+          Utils.toast('📕 错词本里有 ' + due + ' 个单词待复习！');
         }
       }
     }
@@ -497,13 +616,20 @@
       });
     }
 
+    // Boss levels spawn bigger monsters (see monster.js scale/aura/crown).
+    _monsterScale() {
+      return (this.currentLevel && this.currentLevel.isBoss) ? 1.5 : 1;
+    }
+
     // Build a Monster from a server spawn entry, clamped into our world
     // (the server uses a fixed 1440x720 arena).
     _monsterFromSpawn(s) {
+      const scale = this._monsterScale();
+      const half = 22 * scale;
       const m = new Monster(
-        Utils.clamp(s.x, 44, this.world.width - 44),
-        Utils.clamp(s.y, 44, this.world.height - 44),
-        s.word, s.ai, this.currentLevel.monsterSpeed
+        Utils.clamp(s.x, half, this.world.width - half),
+        Utils.clamp(s.y, half, this.world.height - half),
+        s.word, s.ai, this.currentLevel.monsterSpeed, scale
       );
       m.netId = s.id;
       return m;
@@ -518,7 +644,7 @@
       this.activeMonster = m;
       this.paused = true;
       this.state = GameState.PAUSED_QUESTION;
-      const result = await Question.show(m.word, this.words);
+      const result = await Question.show(m.word, this.words, { type: 'en2cn' });
       if (this.state !== GameState.PAUSED_QUESTION) {
         m.isEngaged = false;
         this.activeMonster = null;
@@ -587,6 +713,7 @@
       this.maxCombo = 0;
       this.captured = 0;
       this.timeRemaining = this.currentLevel.timeLimit;
+      this._lowTimeWarned = false;
       this.monsters.forEach(m => { if (m.cleanup) m.cleanup(); });
       this.monsters = [];
       this.coinList = [];
@@ -681,7 +808,9 @@
       }
       const result = document.getElementById('screen-mp-result');
       if (result) result.classList.remove('hidden');
-      Utils.playBeep(iWon ? 'win' : 'wrong');
+      if (window.Sound && Sound.stopBgm) Sound.stopBgm();
+      if (iWon) Utils.playBeep(this.currentLevel.isBoss ? 'bossDown' : 'win');
+      else Utils.playBeep('lose');
 
       // Best-effort own-progress submission (same anti-cheat path as solo).
       if (this.playerName) {
@@ -708,6 +837,10 @@
     // an English string and a non-empty Chinese meaning — a monster without
     // both can't be rendered or answered correctly.
     _eligibleWords() {
+      // Review levels use exactly the due words from the wrong-word book.
+      if (this.currentLevel && this.currentLevel.isReview && this._reviewWords && this._reviewWords.length) {
+        return this._reviewWords;
+      }
       const minD = this.currentLevel.minDifficulty || 1;
       const maxD = this.currentLevel.maxDifficulty || 8;
       const answerable = w => w && Number.isFinite(Number(w.difficulty)) &&
@@ -807,15 +940,56 @@
       }
     }
 
+    // Pick the question type for the next solo question. New hunters (and
+    // the first levels) stay on the classic English→Chinese question; the
+    // other formats unlock gradually by age band and level depth so kids
+    // meet "listen & pick", Chinese→English and spelling only after the
+    // basic format is familiar. Review levels deliberately rotate through
+    // every format — re-testing a word in a different shape is what makes
+    // it stick. Net mode must keep en2cn: the server validates the answer
+    // as the word's Chinese option text.
+    _pickQuestionType(word) {
+      if (this.netMode) return 'en2cn';
+      const isReview = !!(this.currentLevel && this.currentLevel.isReview);
+      const lvl = this.currentLevelNum || 1;
+      const age = Number(this.ageGroup) || 7;
+      const spellable = /^[a-z]{3,9}$/.test(String((word && word.english) || '').trim().toLowerCase());
+      const tts = !!(window.TTS && TTS.isSupported());
+      const bag = ['en2cn', 'en2cn'];
+      if (isReview) {
+        bag.push('cn2en');
+        if (tts) bag.push('listen');
+        if (spellable) bag.push('spell');
+      } else {
+        if (lvl <= 9) return 'en2cn'; // onboarding band
+        if (age >= 5 || lvl >= 40) bag.push('cn2en');
+        if ((age >= 7 || lvl >= 90) && tts) bag.push('listen');
+        if ((age >= 9 || lvl >= 160) && spellable) bag.push('spell');
+      }
+      return Utils.randItem(bag);
+    }
+
+    // Feed a solo/practice answer into the wrong-word book (spaced
+    // repetition). MP verdicts belong to the server, so net mode is
+    // excluded to keep local and authoritative state from drifting.
+    _recordWordResult(word, correct) {
+      if (this.netMode || !window.WrongBook) return;
+      try {
+        if (correct) WrongBook.recordRight(word);
+        else WrongBook.recordWrong(word);
+      } catch (e) { /* the book must never break gameplay */ }
+    }
+
     // Pop the vocabulary question for a monster hit by a bullet. Correct =
     // capture + rewards; wrong = monster counterattacks and player loses HP.
     async _engageMonster(m) {
       if (!m || !m.alive || m.captured || !m.word || m.isEngaged) return;
       m.isEngaged = true;
+      Utils.playBeep('engage');
       this.activeMonster = m;
       this.paused = true;
       this.state = GameState.PAUSED_QUESTION;
-      const result = await Question.show(m.word, this.words);
+      const result = await Question.show(m.word, this.words, { type: this._pickQuestionType(m.word) });
       // endLevel() can run while the question is open. If the level resolved
       // during the question, bail without clobbering WIN/LOSE state.
       if (this.state !== GameState.PAUSED_QUESTION) {
@@ -826,11 +1000,13 @@
       this.paused = false;
       this.state = GameState.PLAYING;
       m.isEngaged = false;
+      this._recordWordResult(m.word, result.correct);
 
       if (result.correct) {
         m.startCapture();
         this.combo += 1;
         this.maxCombo = Math.max(this.maxCombo, this.combo);
+        if (this.combo >= 3 && this.combo % 3 === 0) Utils.playBeep('combo', { combo: this.combo });
         const basePts = 100;
         const comboBonus = Math.floor(this.combo * 20);
         const pts = basePts + comboBonus;
@@ -905,6 +1081,7 @@
         this._scheduleEndLevel(this.captured >= this.currentLevel.target, 600);
       }
       if (this.hp <= 0 && this.netMode && !this._mpKnockedOut) {
+        Utils.playBeep('knockout');
         // Versus: no permadeath — the hunter is knocked out for the rest
         // of the match (movement + firing freeze; the match goes on).
         this._mpKnockedOut = true;
@@ -990,7 +1167,8 @@
       const hearts = '❤'.repeat(Math.max(0, this.hp)) + '🖤'.repeat(Math.max(0, this.maxHp - this.hp));
       document.getElementById('hud-hp').textContent = hearts;
       document.getElementById('hud-score').textContent = this.score;
-      document.getElementById('hud-level').textContent = 'Lv.' + this.currentLevelNum;
+      document.getElementById('hud-level').textContent =
+        (this.currentLevel && this.currentLevel.isReview) ? '复习' : 'Lv.' + this.currentLevelNum;
       document.getElementById('hud-target').textContent = this.captured + '/' + this.currentLevel.target;
       document.getElementById('hud-time').textContent = Math.max(0, Math.ceil(this.timeRemaining));
       const ammoEl = document.getElementById('hud-ammo-num');
@@ -1197,7 +1375,7 @@
       if (!this.netMode && this.monsters.length < 3 && this.timeRemaining > 5) {
         const eligible = this._eligibleWords();
         if (eligible.length > 0) {
-          const more = spawnMonsters(eligible, 2, this.currentLevel.monsterSpeed, this.world.width, this.world.height);
+          const more = spawnMonsters(eligible, 2, this.currentLevel.monsterSpeed, this.world.width, this.world.height, this._monsterScale());
           // spawnMonsters() only spaces monsters against each other, so a
           // respawn can land on top of the player and instantly damage them.
           // Nudge any too-close spawns away.
@@ -1208,6 +1386,12 @@
 
       // Timer
       this.timeRemaining -= dt / 1000;
+      // Low-time warning: one soft tick when crossing 10s (kids get a
+      // gentle cue instead of a wall of beeps for the whole last stretch).
+      if (!this.netMode && this.timeRemaining <= 10 && this.timeRemaining > 0 && !this._lowTimeWarned) {
+        this._lowTimeWarned = true;
+        Utils.playBeep('tick');
+      }
       this._updateHUD();
 
       if (this.timeRemaining <= 0) {
