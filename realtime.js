@@ -31,7 +31,7 @@ const MAX_ROOMS = 500;
 const MAX_CONNS_PER_IP = 8;
 const MSG_RATE_LIMIT = 80;        // messages per second per connection
 const ROOM_IDLE_MS = 5 * 60 * 1000;
-const QUICK_WAIT_MS = 60 * 1000;  // give up matching after this
+const QUICK_WAIT_MS = 20 * 1000;  // give up matching after this
 const ENGAGE_TIMEOUT_MS = 15 * 1000; // answerer disconnected → release lock
 const QUICK_COUNTDOWN_S = 3;
 const PLAYER_COLORS = ['#2ed573', '#1e90ff', '#ff9f43', '#ff6b9d'];
@@ -239,11 +239,10 @@ function attachRealtime(httpServer, deps) {
   }
 
   function startGame(room) {
-    if (room.players.size < 2) {
-      const host = room.players.get(room.hostId);
-      if (host) send(host.ws, 'error', { msg: '至少需要 2 名玩家才能开始对战' });
-      return;
-    }
+    // A single hunter may start too — it becomes a practice run of the
+    // same pipeline (spawns / questions / capture / result), so the mode
+    // is fully experienceable alone. Results still go through the normal
+    // per-player unlock + first-clear validation on submission.
     clearRoomTimers(room);
     releaseEngagement(room);
     room.monsters.clear();
@@ -444,7 +443,7 @@ function attachRealtime(httpServer, deps) {
         quickQueue.push(conn);
         conn.quickTimer = setTimeout(() => {
           removeFromQuick(conn);
-          send(conn.ws, 'error', { msg: '暂时没有找到对手，试试创建房间邀请朋友吧' });
+          send(conn.ws, 'error', { msg: '暂时没有找到对手，试试创建房间先单人练习吧' });
         }, QUICK_WAIT_MS);
         tryPairQuick();
         return;
@@ -455,7 +454,10 @@ function attachRealtime(httpServer, deps) {
         const r = rooms.get(code);
         if (!r) { send(conn.ws, 'error', { msg: '房间不存在' }); return; }
         if (r.players.size >= MAX_PLAYERS) { send(conn.ws, 'error', { msg: '房间已满' }); return; }
-        if (r.state !== 'lobby') { send(conn.ws, 'error', { msg: '对战已经开始，等下一局吧' }); return; }
+        // Only block joins mid-match. A room in 'ended' state (between
+        // rounds, host on the result/room screen) MUST stay joinable —
+        // blocking it turned every post-match join into a silent dead end.
+        if (r.state === 'playing') { send(conn.ws, 'error', { msg: '对战进行中，请等本局结束后加入' }); return; }
         conn.mpLevel = r.level;
         joinRoom(r, conn);
         return;

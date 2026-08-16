@@ -1106,7 +1106,10 @@ html, body {
   border: 3px solid var(--c-darker);
   border-radius: 12px;
   box-shadow: var(--shadow-pixel);
-  z-index: 60;
+  /* Above .screen overlays (100) AND modals (200) — a toast buried under a
+     full-screen panel is invisible, which makes every error read as 
+     "the button does nothing". */
+  z-index: 300;
   letter-spacing: 2px;
   animation: toast-pop 1.6s forwards;
   pointer-events: none;
@@ -1877,7 +1880,7 @@ html, body {
   border: 4px solid var(--c-red);
   border-radius: 24px;
   box-shadow: 0 0 60px rgba(255, 71, 87, 0.35), var(--shadow-big);
-  overflow: hidden;
+  overflow: hidden; /* radius clip; .mp-body owns the scrolling */
   animation: pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -1944,8 +1947,34 @@ html, body {
 
 .mp-join {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+}
+
+.mp-join__label {
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--c-light);
+  opacity: 0.85;
+}
+
+.mp-join__row {
+  display: flex;
   gap: 10px;
   align-items: stretch;
+}
+
+/* Big digit box inside the join-room dialog. */
+.mp-join-modal__input {
+  font-family: var(--font-game);
+  font-size: 36px;
+  text-align: center;
+  letter-spacing: 14px;
 }
 
 .mp-join__input {
@@ -2089,7 +2118,7 @@ html, body {
   .board-row { grid-template-columns: 34px 1fr auto; }
   .board-row__world, .board-row__coins { display: none; }
   .mode-buttons { flex-direction: column; gap: 8px; }
-  .mp-join { flex-direction: column; }
+  .mp-join__row { flex-direction: column; }
 }
 
 .hud-mp {
@@ -2112,3 +2141,225 @@ html, body {
 
 .hud-mp .hud-mp__item { white-space: nowrap; }
 .hud-mp .hud-mp__item.me { color: var(--c-gold); }
+
+
+/* ============================================================
+   TITLE SCREEN v2 — hero + control panel layout
+   Desktop: two columns (hero left, panel right).
+   Mobile: single column, panel right after a compact hero.
+   The panel puts the primary START button directly under the
+   name/age inputs; every secondary action collapses into one
+   toolbar row. Overrides the v1 rules above via cascade order.
+   ============================================================ */
+
+/* --- base (mobile-first): single column, compact hero --- */
+.title-content {
+  max-width: 480px;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.title-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.title-banner { gap: 8px; }
+
+.title-emoji {
+  font-size: clamp(44px, 9vw, 64px);
+  margin-bottom: 0;
+}
+
+.title-text {
+  font-size: clamp(30px, 7vw, 46px);
+}
+
+.tagline {
+  font-size: clamp(11px, 2.6vw, 13px);
+  max-width: 340px;
+}
+
+.title-stats {
+  max-width: 400px;
+}
+
+/* --- control panel card --- */
+.title-form {
+  gap: 10px;
+  max-width: 420px;
+  width: 100%;
+  background: rgba(15, 15, 35, 0.55);
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  padding: 16px 14px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+}
+
+.age-select { gap: 0; }
+
+/* --- secondary toolbar (coins + auth + modes in one band) --- */
+.title-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 2px dashed rgba(255, 255, 255, 0.15);
+}
+
+.title-actions,
+.title-toolbar .mode-buttons {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+}
+
+.title-actions .big-btn,
+.title-toolbar .mode-buttons .big-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: clamp(13px, 2.8vw, 15px);
+  padding: 8px 6px;
+  letter-spacing: 0;
+}
+
+.title-toolbar .title-wallet__coins {
+  align-self: center;
+  font-size: 15px;
+  padding: 3px 14px;
+  border-width: 2px;
+  border-radius: 999px;
+  letter-spacing: 0;
+}
+
+.user-status { margin: 0; }
+
+/* Desktop: two columns — hero on the left, panel on the right.
+   Skip on short landscape screens (they keep the single column). */
+@media (min-width: 900px) and (min-height: 600px) {
+  .title-content {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(28px, 5vw, 64px);
+    max-width: 960px;
+    padding: 24px 32px;
+  }
+
+  .title-hero {
+    flex: 1.15 1 0;
+    min-width: 0;
+    gap: 18px;
+  }
+
+  .title-emoji { font-size: 84px; }
+  .title-text { font-size: 60px; }
+  .title-sub { font-size: 15px; }
+  .tagline { font-size: 15px; max-width: 400px; }
+  .title-stats { max-width: 420px; padding: 10px 16px; }
+  .title-stats__num { font-size: 26px; }
+  .title-stats__label { font-size: 12px; }
+
+  .title-form {
+    flex: 0 0 380px;
+    padding: 20px 18px 16px;
+  }
+
+  .title-toolbar {
+    flex-direction: column;
+  }
+}
+
+/* Phones: let the two button groups share rows tightly */
+@media (max-width: 480px) {
+  .title-toolbar .mode-buttons { flex-direction: row; }
+  .title-actions .big-btn,
+  .title-toolbar .mode-buttons .big-btn { padding: 7px 4px; }
+}
+
+.mp-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 245, 225, 0.75);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.mp-conn__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #feca57;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.mp-conn.ok .mp-conn__dot { background: #2ed573; }
+.mp-conn.bad .mp-conn__dot { background: #ff4757; }
+.mp-conn.ok { color: #2ed573; }
+.mp-conn.bad { color: #ff6b81; }
+
+.mp-searching__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.version-tag {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  z-index: 2;
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  color: rgba(255, 245, 225, 0.35);
+  pointer-events: none;
+  letter-spacing: 1px;
+}
+
+/* MP panel: scrollable body so nothing is ever clipped on short screens */
+.mp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mp-view { flex: none; }
+
+.mp-row {
+  display: flex;
+  gap: 10px;
+}
+
+.mp-row .big-btn { flex: 1 1 0; min-width: 0; }
+
+/* Flex children need min-height:0 to actually shrink+scroll inside the
+   panels (same clipping class of bug as the MP lobby had). */
+.shop-grid { min-height: 0; }
+.board-table { min-height: 0; }
+
+/* Global visibility utility. Every view swap in JS is done by toggling the
+   .hidden class, so it must actually hide ANY element regardless of its own
+   display rule — without this, .mp-view{display:flex} overrode it and the
+   lobby's three views (menu/searching/room) rendered stacked on top of each
+   other. */
+.hidden { display: none !important; }
+
+@media (max-width: 480px) {
+  .mp-row { flex-direction: column; }
+}

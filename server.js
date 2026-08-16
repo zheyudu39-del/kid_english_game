@@ -615,7 +615,24 @@ app.use('/api', (req, res, next) => {
   rateLimit(isWrite ? 'write' : 'read')(req, res, next);
 });
 
-app.use(express.static(PUBLIC_DIR));
+// Static assets: always revalidate. The frontend ships as discrete <script>
+// files with no build hashing — without an explicit no-cache policy browsers
+// heuristic-cache index.html/JS and can end up running a MIX of old and new
+// files after an update, which breaks wiring (dead buttons). ETag revalidation
+// keeps this cheap (304s) while guaranteeing freshness.
+app.use(express.static(PUBLIC_DIR, {
+  etag: true,
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else {
+      // Images/fonts may cache for a session.
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
+  }
+}));
 
 // ---------------------------------------------------------------- API routes
 

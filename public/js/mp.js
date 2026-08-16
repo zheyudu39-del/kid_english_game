@@ -9,6 +9,36 @@
   let myId = null;
   let room = null;          // { code, state, level, players: [{id,name,color,host}] }
   let mpLevel = 1;
+  let searchingTimer = null;
+  let searchingBackstop = null;
+
+  function stopSearchingTimer() {
+    if (searchingTimer) {
+      clearInterval(searchingTimer);
+      searchingTimer = null;
+    }
+    // Local backstop: never stay on the searching screen longer than this,
+    // even when the server's 20s timeout error never arrives (dead socket,
+    // restarted server, ...). 25s > 20s server timeout on purpose.
+    if (searchingBackstop) {
+      clearTimeout(searchingBackstop);
+      searchingBackstop = null;
+    }
+  }
+
+  function isSearching() {
+    const v = el('mp-searching');
+    return !!(v && !v.classList.contains('hidden'));
+  }
+
+  // Leave the searching state and explain why.
+  function bailFromSearching(msg) {
+    if (!isSearching()) return;
+    stopSearchingTimer();
+    window.Net.leaveRoom(); // also drops the server-side queue entry
+    showView('mp-menu');
+    if (msg) Utils.toast(msg, 3000);
+  }
 
   function game() { return window._game || null; }
 
@@ -42,23 +72,30 @@
     // If we're still in a room (e.g. after a match), reopen straight to it.
     showView(room ? 'mp-room' : 'mp-menu');
     screen.classList.remove('hidden');
-    try { await window.Net.ensureConnected(); }
+    updateConnIndicator();
+    try { await window.Net.ensureConnected(); updateConnIndicator(); }
     catch (e) {
-      Utils.toast('联机服务连接失败，请稍后再试');
+      updateConnIndicator();
+      Utils.toast('联机连接失败，请刷新页面重试；若仍失败，退出登录后重新登录一次', 3500);
     }
   }
 
   function close() {
     const screen = el('screen-mp');
     if (screen) screen.classList.add('hidden');
+    closeJoinModal();
     const g = game();
     if (g && typeof g.isModalPaused === 'function' && typeof g.resumeFromModal === 'function' && g.isModalPaused()) {
       g.resumeFromModal();
     }
-    // Closing the lobby also leaves any room we were sitting in.
+    // Closing the lobby always sends 'leave': it cancels any pending quick
+    // match queue entry (otherwise a "ghost" waiter could be paired later)
+    // and leaves any room we were sitting in.
+    stopSearchingTimer();
+    const wasSearching = !el('mp-searching').classList.contains('hidden');
+    if (room || wasSearching) window.Net.leaveRoom();
     if (room) {
       room = null;
-      window.Net.leaveRoom();
       Utils.toast('已离开房间');
     }
   }
@@ -102,47 +139,136 @@
       });
     }
     const amHost = (room.players || []).some(p => p.host && p.id === myId);
+    const count = (room.players || []).length;
     const startBtn = el('btn-mp-start');
-    if (startBtn) startBtn.classList.toggle('hidden', !amHost);
+    if (startBtn) {
+      startBtn.classList.toggle('hidden', !amHost);
+      // A lone hunter can still start — it becomes a practice run.
+      startBtn.textContent = count === 1 ? '🎯 开始练习（单人）' : '🎯 开始对战';
+    }
     const hint = el('mp-hint');
     if (hint) {
-      hint.textContent = amHost
-        ? '人齐后点击开始对战（2-4 人）'
-        : '等待房主开始对战…';
+      if (!amHost) {
+        hint.textContent = count === 1
+          ? '等待房主开始练习或对战…'
+          : '等待房主开始对战…';
+      } else if (count === 1) {
+        hint.textContent = '还没有对手 — 可以先单人练习，或把房间码发给朋友';
+      } else {
+        hint.textContent = '人齐了，点击开始对战（2-4 人）';
+      }
     }
+  }
+
+  // Live connection indicator in the lobby header: ● 已连接 / 连接中 / ✕ 断开.
+  function updateConnIndicator() {
+    const elc = el('mp-conn');
+    if (!elc) return;
+    const s = window.Net.status();
+    const dot = elc.querySelector('.mp-conn__dot');
+    elc.classList.toggle('ok', s === 'open');
+    elc.classList.toggle('bad', s === 'closed');
+    const label = elc.childNodes[elc.childNodes.length - 1];
+    const text = s === 'open' ? '已连接' : (s === 'closed' ? '未连接' : '连接中…');
+    if (label && label.nodeType === 3) label.textContent = text;
+  }
+
+  // All lobby actions funnel through this: it waits for the socket and turns
+  // connection problems into an actionable message instead of a silent no-op.
+  function withConnection(action, doing) {
+    updateConnIndicator();
+    window.Net.ensureConnected().then(() => {
+      updateConnIndicator();
+      action();
+    }).catch((err) => {
+      updateConnIndicator();
+      const msg = err && err.message === '请先登录后再联机'
+        ? '联机需要先登录账号'
+        : '联机连接失败（' + ((err && err.message) || '未知') + '）。请刷新页面重试；若仍失败，退出登录后重新登录一次';
+      Utils.toast(msg, 3500);
+    });
   }
 
   // ---- actions ----
   function createRoom() {
-    window.Net.ensureConnected().then(() => {
-      window.Net.createRoom(mpLevel);
-    }).catch(() => Utils.toast('联机服务连接失败，请稍后再试'));
+    withConnection(() => window.Net.createRoom(mpLevel));
   }
 
   function quickMatch() {
-    window.Net.ensureConnected().then(() => {
+    withConnection(() => {
       window.Net.quickMatch(mpLevel);
       showView('mp-searching');
-    }).catch(() => Utils.toast('联机服务连接失败，请稍后再试'));
+      startSearchingTimer();
+    });
+  }
+
+  // Live "已等待 n 秒" counter so waiting never feels frozen.
+  function startSearchingTimer() {
+    stopSearchingTimer();
+    const startedAt = Date.now();
+    const text = el('mp-searching-text');
+    searchingTimer = setInterval(() => {
+      if (!text) return;
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      text.textContent = '正在寻找对手… 已等待 ' + s + ' 秒';
+    }, 1000);
+    if (text) text.textContent = '正在寻找对手… 已等待 0 秒';
+    searchingBackstop = setTimeout(() => {
+      bailFromSearching('暂时没有匹配到其他玩家——先创建房间单人练习吧，朋友可随时用房码加入');
+    }, 25000);
   }
 
   function cancelQuick() {
+    stopSearchingTimer();
     // 'leave' doubles as "cancel quick match" server-side (it drops any
     // queued entry AND leaves a room when in one).
     window.Net.leaveRoom();
     showView('mp-menu');
   }
 
+  // Escape hatch straight from the waiting screen: stop waiting, make a room.
+  function practiceFromQuick() {
+    if (!isSearching()) return;
+    stopSearchingTimer();
+    window.Net.leaveRoom(); // drop the queue entry
+    withConnection(() => window.Net.createRoom(mpLevel));
+  }
+
   function joinByCode() {
-    const input = el('mp-join-code');
+    // The button ALWAYS opens the dialog. A stale code sitting in the inline
+    // box (e.g. synced from a previous join) must never silently re-join an
+    // old room — that bypasses the dialog and confuses everyone.
+    openJoinModal();
+  }
+
+  // ---- join-by-code dialog ----
+  function openJoinModal() {
+    const m = el('mp-join-modal');
+    const input = el('mp-join-modal-input');
+    if (!m || !input) return;
+    const inline = el('mp-join-code');
+    input.value = (inline && inline.value || '').trim();
+    m.classList.remove('hidden');
+    try { input.focus(); input.select(); } catch (e) { /* non-fatal */ }
+  }
+
+  function closeJoinModal() {
+    const m = el('mp-join-modal');
+    if (m) m.classList.add('hidden');
+  }
+
+  function submitJoinModal() {
+    const input = el('mp-join-modal-input');
     const code = (input && input.value || '').trim();
     if (!/^\d{4}$/.test(code)) {
       Utils.toast('请输入 4 位数字房间码');
+      if (input) { try { input.focus(); input.select(); } catch (e) { /* non-fatal */ } }
       return;
     }
-    window.Net.ensureConnected().then(() => {
-      window.Net.joinRoom(code);
-    }).catch(() => Utils.toast('联机服务连接失败，请稍后再试'));
+    const inline = el('mp-join-code');
+    if (inline) inline.value = code; // keep the inline box in sync
+    closeJoinModal();
+    withConnection(() => window.Net.joinRoom(code));
   }
 
   function leaveRoom() {
@@ -188,6 +314,7 @@
     Net.on('welcome', (msg) => { myId = msg.id; });
 
     Net.on('room', (msg) => {
+      stopSearchingTimer();
       room = msg;
       renderRoom();
     });
@@ -200,6 +327,7 @@
     Net.on('start', (msg) => {
       const screen = el('screen-mp');
       if (screen) screen.classList.add('hidden');
+      closeJoinModal();
       const g = game();
       if (g && typeof g.startLevelNet === 'function') {
         g.startLevelNet(msg, myId);
@@ -208,6 +336,7 @@
 
     Net.on('error', (msg) => {
       Utils.toast(msg.msg || '联机错误');
+      stopSearchingTimer();
       // Errors from queue timeout etc. land us back on the menu.
       if (!room && !el('mp-searching').classList.contains('hidden')) {
         showView('mp-menu');
@@ -215,10 +344,16 @@
     });
 
     Net.onStatus((s) => {
-      if (s === 'closed' && room) {
-        Utils.toast('联机连接已断开');
-        room = null;
-        showView('mp-menu');
+      updateConnIndicator();
+      if (s === 'closed') {
+        // Socket died: recover BOTH stuck states (searching / in-room),
+        // otherwise the lobby sits on a dead screen forever.
+        if (isSearching()) bailFromSearching('联机连接已断开，请重新匹配或创建房间');
+        else if (room) {
+          Utils.toast('联机连接已断开');
+          room = null;
+          showView('mp-menu');
+        }
       }
     });
   }
@@ -270,10 +405,32 @@
       cancelBtn.addEventListener('click', cancelQuick);
       cancelBtn.dataset.wired = '1';
     }
+    const practiceBtn = el('btn-mp-quick-practice');
+    if (practiceBtn && !practiceBtn.dataset.wired) {
+      practiceBtn.addEventListener('click', practiceFromQuick);
+      practiceBtn.dataset.wired = '1';
+    }
     const joinBtn = el('btn-mp-join');
     if (joinBtn && !joinBtn.dataset.wired) {
       joinBtn.addEventListener('click', joinByCode);
       joinBtn.dataset.wired = '1';
+    }
+    const joinClose = el('btn-mp-join-close');
+    if (joinClose && !joinClose.dataset.wired) {
+      joinClose.addEventListener('click', closeJoinModal);
+      joinClose.dataset.wired = '1';
+    }
+    const joinForm = el('mp-join-form');
+    if (joinForm && !joinForm.dataset.wired) {
+      joinForm.addEventListener('submit', (e) => { e.preventDefault(); submitJoinModal(); });
+      joinForm.dataset.wired = '1';
+    }
+    const joinModalInput = el('mp-join-modal-input');
+    if (joinModalInput && !joinModalInput.dataset.wired) {
+      joinModalInput.addEventListener('input', () => {
+        joinModalInput.value = joinModalInput.value.replace(/\D/g, '').slice(0, 4);
+      });
+      joinModalInput.dataset.wired = '1';
     }
     const leaveBtn = el('btn-mp-leave');
     if (leaveBtn && !leaveBtn.dataset.wired) {
@@ -282,7 +439,7 @@
     }
     const startBtn = el('btn-mp-start');
     if (startBtn && !startBtn.dataset.wired) {
-      startBtn.addEventListener('click', () => { window.Net.startGame(); });
+      startBtn.addEventListener('click', () => { withConnection(() => window.Net.startGame()); });
       startBtn.dataset.wired = '1';
     }
     const lobbyBtn = el('btn-mp-lobby');
@@ -304,6 +461,12 @@
     }
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
+        const joinModal = el('mp-join-modal');
+        if (joinModal && !joinModal.classList.contains('hidden')) {
+          e.preventDefault();
+          closeJoinModal();
+          return;
+        }
         const screen = el('screen-mp');
         if (screen && !screen.classList.contains('hidden')) {
           e.preventDefault();

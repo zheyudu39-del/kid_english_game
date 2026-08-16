@@ -19,12 +19,28 @@ function check(name, ok, detail) {
 
 async function makeAccount(tag) {
   const nickname = 'MP' + tag + Date.now().toString().slice(-8);
-  const reg = await fetch(BASE + '/api/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname, password: PASS, age: 7 })
-  }).then(r => r.json());
-  return { nickname, token: reg.token };
+  // Back off on the auth rate limit (10/min/IP) instead of failing the run.
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(BASE + '/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname, password: PASS, age: 7 })
+    });
+    if (res.status === 201) return { nickname, token: (await res.json()).token };
+    if (res.status === 409) {
+      const login = await fetch(BASE + '/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, password: PASS })
+      });
+      if (login.status === 200) return { nickname, token: (await login.json()).token };
+    }
+    if (res.status === 429 && attempt < 12) {
+      await new Promise(r => setTimeout(r, 6000));
+      continue;
+    }
+    throw new Error('register failed: ' + res.status);
+  }
 }
 
 async function newPlayerBrowser(account) {
@@ -77,8 +93,13 @@ async function newPlayerBrowser(account) {
 
   await pageB.click('#btn-multiplayer');
   await pageB.waitForSelector('#screen-mp:not(.hidden)', { timeout: 5000 });
+  // Join goes through the dialog: click opens it (prefilled from the inline
+  // box), Enter submits the form.
   await pageB.type('#mp-join-code', code);
   await pageB.click('#btn-mp-join');
+  await pageB.waitForSelector('#mp-join-modal:not(.hidden)', { timeout: 5000 });
+  check('join dialog opens from the button', true);
+  await pageB.keyboard.press('Enter');
   await pageA.waitForFunction(() => document.querySelectorAll('#mp-players .mp-player').length === 2, { timeout: 5000 });
   check('host sees both players in lobby', true);
   const hostSeesStart = await pageA.$eval('#btn-mp-start', el => !el.classList.contains('hidden'));

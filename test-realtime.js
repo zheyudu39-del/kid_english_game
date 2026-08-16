@@ -28,9 +28,23 @@ async function api(method, path, body) {
 
 async function makeAccount(tag) {
   const nickname = 'WS' + tag + Date.now().toString().slice(-8);
-  const reg = await api('POST', '/api/register', { nickname, password: 'secret123', age: 7 });
-  if (reg.status !== 201) throw new Error('register failed: ' + reg.status);
-  return { nickname, token: reg.json.token };
+  // The server's auth endpoints are rate-limited (10/min/IP — brute-force
+  // defense). A full test run registers several accounts, so back off and
+  // retry when we trip the limit instead of failing the run.
+  for (let attempt = 1; ; attempt++) {
+    const reg = await api('POST', '/api/register', { nickname, password: 'secret123', age: 7 });
+    if (reg.status === 201) return { nickname, token: reg.json.token };
+    if (reg.status === 409) {
+      // The registration actually landed but we missed the 201 — log in.
+      const login = await api('POST', '/api/login', { nickname, password: 'secret123' });
+      if (login.status === 200) return { nickname, token: login.json.token };
+    }
+    if (reg.status === 429 && attempt < 12) {
+      await new Promise(r => setTimeout(r, 6000));
+      continue;
+    }
+    throw new Error('register failed: ' + reg.status);
+  }
 }
 
 // A minimal scripted WS client: collects messages, offers waitFor(type).
@@ -106,7 +120,7 @@ function connect(token) {
   cb.send('join', { code: roomA.code });
   await cb.waitFor('room');
 
-  console.log('4. start needs host + 2 players');
+  console.log('4. start permission (host only)');
   cb.send('start');
   const notHost = await cb.waitFor('error');
   check('non-host cannot start', /房主/.test(notHost.msg), notHost);
@@ -228,6 +242,66 @@ function connect(token) {
   // a fresh hit works. We just verify A receives peer_leave promptly.
   const left = await ca.waitFor('peer_leave');
   check('peer_leave on disconnect', left.id === wb.id, left);
+
+  console.log('9. solo practice run (single hunter)');
+  const E = await makeAccount('e');
+  const ce = await connect(E.token);
+  const we = await ce.waitFor('welcome');
+  ce.send('create', { level: 4 });
+  const roomE = await ce.waitFor('room');
+  check('solo room created', roomE.players.length === 1, roomE);
+  ce.send('start');
+  const startE = await ce.waitFor('start');
+  check('solo start allowed (practice)', startE.level === 4 && startE.spawns.length > 0, startE.level);
+  // Race to the target alone.
+  const usedE = new Set();
+  const knownE = () => startE.spawns.concat(
+    ce.inbox.filter(m => m.type === 'spawn').flatMap(m => m.spawns));
+  const softE = (type, ms) => ce.waitFor(type, ms).then(m => m, () => null);
+  let soloDone = false;
+  while (!soloDone) {
+    const cand = knownE().find(s => !usedE.has(s.id));
+    if (!cand) {
+      const wave = await softE('spawn', 3000);
+      if (!wave) break;
+      continue;
+    }
+    usedE.add(cand.id);
+    ce.send('hit', { monsterId: cand.id });
+    const eng = await softE('engage', 1500);
+    if (!eng || eng.by !== we.id) continue;
+    ce.send('answer', { monsterId: cand.id, choice: cand.word.chinese });
+    const cap = await softE('capture', 1500);
+    if (!cap) continue;
+    soloDone = cap.captured >= startE.target;
+  }
+  check('solo practice raced to target', soloDone, { target: startE.target });
+  const endE = await ce.waitFor('end', 10000);
+  check('solo practice ends with winner', endE.winner && endE.winner.id === we.id, endE.winner);
+  check('solo standings have one entry', endE.standings.length === 1 && endE.standings[0].captured >= startE.target, endE.standings);
+  ce.close();
+
+  console.log('10. quick-match ghost cancel');
+  // A queued player closing the lobby must not stay pairable.
+  const F = await makeAccount('f');
+  const G = await makeAccount('g');
+  const cf = await connect(F.token);
+  const cg = await connect(G.token);
+  await cf.waitFor('welcome');
+  await cg.waitFor('welcome');
+  cf.send('quick', { level: 2 });
+  await new Promise(r => setTimeout(r, 200));
+  cf.send('leave'); // "closed the lobby" → cancels the queue entry
+  cg.send('quick', { level: 2 });
+  // cg must NOT be paired with the cancelled cf: it stays searching.
+  await new Promise(r => setTimeout(r, 1500));
+  const ghostRoom = await Promise.race([
+    cg.waitFor('room', 1500).then(() => true, () => false),
+    new Promise(r => setTimeout(() => r(false), 1600))
+  ]);
+  check('cancelled waiter is not paired (no ghost)', ghostRoom === false, ghostRoom);
+  cf.close();
+  cg.close();
 
   ca.close();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);

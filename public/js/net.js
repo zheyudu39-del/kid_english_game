@@ -8,6 +8,7 @@
 
   const RECONNECT_DELAYS = [1000, 2000, 4000];
   const POS_INTERVAL = 50; // ms between position broadcasts (20Hz)
+  const CONNECT_TIMEOUT = 12000; // give up a stuck connection after this
 
   const handlers = new Map();   // type -> Set<fn>
   let ws = null;
@@ -113,14 +114,20 @@
 
   const Net = {
     // Resolve once the socket is open (connects if needed). Rejects when
-    // not logged in or after the reconnect budget is exhausted.
+    // not logged in, after the reconnect budget is exhausted, or after
+    // CONNECT_TIMEOUT (a black-holed connection would otherwise pend
+    // forever with zero feedback — "clicked, nothing happened").
     ensureConnected() {
       return new Promise((resolve, reject) => {
         if (status === 'open') { resolve(); return; }
         if (!openSocket()) { reject(new Error('无法建立连接')); return; }
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('连接超时'));
+        }, CONNECT_TIMEOUT);
         const onChange = (s) => {
-          if (s === 'open') { resolve(); cleanup(); }
-          else if (s === 'closed') { reject(new Error('连接已断开')); cleanup(); }
+          if (s === 'open') { clearTimeout(timer); resolve(); cleanup(); }
+          else if (s === 'closed') { clearTimeout(timer); reject(new Error('连接已断开')); cleanup(); }
         };
         const cleanup = () => statusListeners.delete(onChange);
         statusListeners.add(onChange);
