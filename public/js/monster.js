@@ -4,9 +4,16 @@
 
   const SIZE = 44;          // visual size
   const HITBOX = 36;        // collision size
-  const DETECT_RADIUS = 180; // when aggressive, notice player this far
 
-  const MONSTER_EMOJIS = ['👾', '👻', '🤖', '👹', '🧟', '🦇', '🐙', '🦑', '🐲', '🐍', '🕷️', '🦂', '🐢', '🦖'];
+  // Solid body palettes (light→dark) so each monster is a solid outlined
+  // creature instead of a floating emoji.
+  const BODY_COLORS = [
+    { light: '#7bdc5c', dark: '#3f9d2f' },  // green slime
+    { light: '#b07bf0', dark: '#7a3fd6' },  // purple
+    { light: '#ff7b6b', dark: '#d63f2f' },  // red
+    { light: '#5cd0d0', dark: '#2f9d9d' },  // teal
+    { light: '#ffb347', dark: '#d67f1f' }   // orange
+  ];
   const SPEECH_BUBBLE_EMOJIS = ['💢', '❗', '💢', '❓'];
 
   // AI types
@@ -44,12 +51,16 @@
       this.speed = speed || 0.8;
       this.dir = { x: Utils.randFloat(-1, 1), y: Utils.randFloat(-1, 1) };
       this.normalize();
-      this.emoji = Utils.randItem(MONSTER_EMOJIS);
-      this.color = `hsl(${Utils.randInt(0, 360)}, 70%, 60%)`;
-      this.wobble = 0;
+      this.bodyColor = Utils.randItem(BODY_COLORS);
+      // Speech-bubble emoji picked once per monster so it doesn't re-roll
+      // (and visually flicker) on every rendered frame.
+      this.speechEmoji = Utils.randItem(SPEECH_BUBBLE_EMOJIS);
+      this.attackCooldown = 0;     // ms until this monster can melee again
+      this.shootTimer = Utils.randInt(600, 1600); // ms until next ranged shot (aggressive)
       this.alive = true;
       this.captured = false;
       this.captureAnim = 0;        // 0..1 animation progress
+      this.stunned = 0;            // ms remaining while stunned (眩晕手雷)
       this.patrolTarget = {
         x: x + Utils.randInt(-120, 120),
         y: y + Utils.randInt(-120, 120)
@@ -81,7 +92,15 @@
         return;
       }
 
-      this.wobble += dt * 0.005;
+      // Stunned (眩晕手雷): freeze in place — no acting, moving, or shooting.
+      if (this.stunned > 0) {
+        this.stunned -= dt;
+        return;
+      }
+
+      // Attack cooldowns tick down regardless of AI state.
+      if (this.attackCooldown > 0) this.attackCooldown -= dt;
+      if (this.shootTimer > 0) this.shootTimer -= dt;
 
       // AI logic
       // Dynamic detect radius based on world size (min 100, max 300).
@@ -97,7 +116,13 @@
         this.dir.x = dx / m;
         this.dir.y = dy / m;
       } else if (this.ai === AI.PATROL) {
-        // Move toward patrol target; pick new one when reached
+        // Move toward patrol target; pick new one when reached.
+        // Re-clamp every frame: the constructor's initial target is random
+        // around the spawn point and can land outside the world when the
+        // monster spawns near an edge. An out-of-world target is
+        // unreachable (the edge bounce always wins), pinning the monster
+        // against the wall forever. (The rebuild path below also clamps.)
+        this.clampPatrolTarget(worldW, worldH);
         const d = Utils.dist(this, this.patrolTarget);
         if (d < 10) {
           // Clamp patrol target to world bounds
@@ -143,6 +168,13 @@
       return { x: this.x, y: this.y, w: HITBOX, h: HITBOX };
     }
 
+    // ---- combat helpers (driven by game.js) ----
+    isAggressive() { return this.ai === AI.AGGRESSIVE; }
+    canMeleeAttack() { return this.attackCooldown <= 0; }
+    resetMeleeCooldown() { this.attackCooldown = 1000; }
+    canShoot() { return this.isAggressive() && this.shootTimer <= 0; }
+    resetShootTimer() { this.shootTimer = 1600; }
+
     render(ctx) {
       ctx.save();
 
@@ -166,9 +198,8 @@
           ctx.fillText('💫', this.x + 12, this.y + 8);
         }
       } else {
-        // Wobble idle
-        const wobY = Math.sin(this.wobble * 3) * 3;
-        ctx.translate(0, wobY);
+        // (No ghostly float — the vector body below sits grounded on its
+        // shadow, which is what makes it read as a solid creature.)
       }
 
       // Shadow
@@ -177,17 +208,19 @@
       ctx.ellipse(this.x, this.y + SIZE/2 - 2, SIZE/2.4, 5, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Monster body (emoji) - restroed for scene navigation
-      ctx.font = `${SIZE}px serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(this.emoji, this.x, this.y);
+      // Solid vector body (outlined creature, no emoji)
+      this._drawBody(ctx);
 
       // Word label below
       const labelY = this.y + SIZE/2 + 12;
       // Pill background
       ctx.font = 'bold 14px "Nunito", system-ui, sans-serif';
-      const text = this.word.english;
+      // Defensive guard: never let a missing/malformed word crash the
+      // render loop (word may be undefined if a caller spawned monsters
+      // with an invalid word pool).
+      const text = (this.word && typeof this.word.english === 'string')
+        ? this.word.english
+        : '?';
       const w = ctx.measureText(text).width + 14;
       const h = 20;
       ctx.fillStyle = 'rgba(0,0,0,0.75)';
@@ -199,13 +232,103 @@
       ctx.textBaseline = 'middle';
       ctx.fillText(text, this.x, labelY);
 
-      // Speech bubble (small) when aggressive/close to player
+      // Speech bubble (small) when aggressive/close to player. Uses the
+      // emoji chosen at construction (stable across frames).
       if (this.ai === AI.AGGRESSIVE) {
         ctx.font = '14px serif';
-        ctx.fillText(Utils.randItem(SPEECH_BUBBLE_EMOJIS), this.x + 14, this.y - 22);
+        ctx.fillText(this.speechEmoji, this.x + 14, this.y - 22);
+      }
+
+      // Locked by another hunter's question (versus mode): stand-by mark
+      // so everyone can see it's taken.
+      if (this.netLocked != null) {
+        ctx.font = '16px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🔒', this.x - 14, this.y - 22);
+      }
+
+      // Stun indicator
+      if (this.stunned > 0) {
+        ctx.font = '18px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('💫', this.x, this.y - 24);
       }
 
       ctx.restore();
+    }
+
+    // Vector monster: outlined slime body with angry face, feet, and a horn.
+    // Drawn centered on (this.x, this.y). This replaces the floating emoji
+    // so the monster reads as a solid, grounded creature.
+    _drawBody(ctx) {
+      const x = this.x, y = this.y;
+      const s = SIZE / 44;   // design at 44 units, scaled
+      const OUT = '#2b1a12'; // unified outline (matches the player)
+      const c = this.bodyColor || BODY_COLORS[0];
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+
+      // Body blob with a radial gradient for volume
+      const body = ctx.createRadialGradient(x - 6 * s, y - 10 * s, 3 * s, x, y - 2 * s, 24 * s);
+      body.addColorStop(0, c.light);
+      body.addColorStop(1, c.dark);
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.ellipse(x, y - 2 * s, 20 * s, 17 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 2.5 * s;
+      ctx.strokeStyle = OUT;
+      ctx.stroke();
+
+      // Feet (ground contact)
+      ctx.fillStyle = c.dark;
+      ctx.beginPath(); ctx.ellipse(x - 9 * s, y + 15 * s, 6 * s, 4 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x + 9 * s, y + 15 * s, 6 * s, 4 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+      // Horn / spike
+      ctx.fillStyle = '#f7d774';
+      ctx.beginPath();
+      ctx.moveTo(x - 3 * s, y - 17 * s);
+      ctx.lineTo(x + 4 * s, y - 17 * s);
+      ctx.lineTo(x + 0 * s, y - 27 * s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.lineWidth = 1.5 * s;
+      ctx.stroke();
+
+      // Eyes (white sclera)
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.ellipse(x - 7 * s, y - 6 * s, 5 * s, 6 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x + 7 * s, y - 6 * s, 5 * s, 6 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 1.5 * s;
+      ctx.strokeStyle = OUT;
+      ctx.stroke();
+
+      // Pupils track the facing direction
+      const look = Math.sign(this.dir.x) || 0;
+      ctx.fillStyle = '#1e1e2e';
+      ctx.beginPath(); ctx.arc(x - 7 * s + look * 1.5 * s, y - 5 * s, 2.4 * s, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + 7 * s + look * 1.5 * s, y - 5 * s, 2.4 * s, 0, Math.PI * 2); ctx.fill();
+
+      // Angry eyebrows
+      ctx.lineWidth = 2.2 * s;
+      ctx.strokeStyle = OUT;
+      ctx.beginPath();
+      ctx.moveTo(x - 12 * s, y - 13 * s); ctx.lineTo(x - 3 * s, y - 10 * s);
+      ctx.moveTo(x + 12 * s, y - 13 * s); ctx.lineTo(x + 3 * s, y - 10 * s);
+      ctx.stroke();
+
+      // Angry zigzag mouth
+      ctx.lineWidth = 2 * s;
+      ctx.beginPath();
+      ctx.moveTo(x - 8 * s, y + 6 * s);
+      ctx.lineTo(x - 4 * s, y + 4 * s);
+      ctx.lineTo(x, y + 6 * s);
+      ctx.lineTo(x + 4 * s, y + 4 * s);
+      ctx.lineTo(x + 8 * s, y + 6 * s);
+      ctx.stroke();
     }
   }
 
@@ -223,6 +346,19 @@
       return monsters;
     }
 
+    // Guard against an empty/invalid word pool. Utils.randItem([]) returns
+    // undefined, and a monster with word === undefined throws in render()
+    // (word.english) on the very first frame, killing the whole rAF loop.
+    if (!Array.isArray(words) || words.length === 0) {
+      console.warn('spawnMonsters: empty word pool, spawning no monsters');
+      return monsters;
+    }
+    const validWords = words.filter(w => w && typeof w === 'object' && w.english);
+    if (validWords.length === 0) {
+      console.warn('spawnMonsters: no valid words (missing english field), spawning no monsters');
+      return monsters;
+    }
+
     while (monsters.length < count && attempts < maxAttempts) {
       attempts++;
       const x = Utils.randInt(60, worldW - 60);
@@ -234,7 +370,7 @@
       }
       if (tooClose) continue;
 
-      const word = Utils.randItem(words);
+      const word = Utils.randItem(validWords);
       const ai = Utils.randItem(aiTypes);
       monsters.push(new Monster(x, y, word, ai, speed));
     }
@@ -244,5 +380,4 @@
 
   window.Monster = Monster;
   window.spawnMonsters = spawnMonsters;
-  window.MONSTER_AI = AI;
 })();

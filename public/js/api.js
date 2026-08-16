@@ -4,6 +4,16 @@
   'use strict';
 
   const REQUEST_TIMEOUT = 30000; // 30 seconds
+  const TOKEN_KEY = 'wordhunter:token';
+
+  // Session token issued by /api/login and /api/register. Attached to every
+  // request below; the server only honours it on endpoints that need proof
+  // of identity (profile / progress / shop writes). Never stores anything
+  // derived from the password.
+  function sessionToken() {
+    try { return localStorage.getItem(TOKEN_KEY) || ''; }
+    catch (e) { return ''; }
+  }
 
   async function request(url, options) {
     const controller = new AbortController();
@@ -13,9 +23,15 @@
     // headers but stalled the body could hang forever.
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
+    // Merge caller headers with the session token so every endpoint gets it.
+    const headers = Object.assign({}, options && options.headers);
+    const token = sessionToken();
+    if (token) headers['X-Player-Token'] = token;
+
     try {
       const res = await fetch(url, {
         ...options,
+        headers,
         signal: controller.signal
       });
 
@@ -91,9 +107,12 @@
       return request('/api/vocabulary' + (age != null ? '?age=' + age : ''));
     },
 
-    getPlayer(name, age) {
-      const qs = age != null ? '?age=' + age : '';
-      return request('/api/players/' + encodeURIComponent(name) + qs);
+    // Fetch the caller's own profile. The server's ownership gate requires
+    // the session token (attached by request()), so this only works while
+    // logged in.
+    getOwnProfile(name) {
+      const caller = name && name.length ? name : this._currentPlayer();
+      return request('/api/players/' + encodeURIComponent(caller || 'guest'));
     },
 
     // Look up the currently-logged-in nickname (if any) so callers don't
@@ -103,17 +122,30 @@
       catch (e) { return ''; }
     },
 
+    // Store / drop the session token. Called by register.js after a
+    // successful login and on logout / session invalidation.
+    setToken(token) {
+      try {
+        if (token) localStorage.setItem(TOKEN_KEY, token);
+        else localStorage.removeItem(TOKEN_KEY);
+      } catch (e) { /* non-fatal */ }
+    },
+
+    // Current session token ('' when not logged in). net.js uses this to
+    // authenticate the WebSocket connection.
+    getToken() {
+      return sessionToken();
+    },
+
     submitProgress(name, payload) {
-      // Server enforces that the caller owns the profile (X-Player == nickname).
-      // If the client passed an empty name, fall back to the locally-logged-in
-      // nickname; if still empty, the request will 401 — which is correct,
-      // because the player isn't really logged in.
+      // Server enforces that the caller's session token matches the
+      // profile nickname. If the client passed an empty name, fall back to
+      // the locally-logged-in nickname; if still empty, the request will
+      // 401 — which is correct, because the player isn't really logged in.
       const caller = name && name.length ? name : this._currentPlayer();
-      const headers = { 'Content-Type': 'application/json' };
-      if (caller) headers['X-Player'] = caller;
       return request('/api/players/' + encodeURIComponent(caller || name || 'guest') + '/progress', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
     },
@@ -124,19 +156,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-    },
-
-    getScores(filters = {}) {
-      // Forward every filter the server supports (limit / age / game /
-      // nickname); previously only `limit` was passed and the other
-      // filters were silently dropped, returning the unfiltered global
-      // leaderboard to callers that asked for a specific slice.
-      const qs = new URLSearchParams();
-      if (filters.limit) qs.set('limit', filters.limit);
-      if (filters.age != null && filters.age !== '') qs.set('age', filters.age);
-      if (filters.game) qs.set('game', filters.game);
-      if (filters.nickname) qs.set('nickname', filters.nickname);
-      return request('/api/scores?' + qs.toString());
     },
 
     // 666-level generator: lightweight metadata for all levels (~5KB).
@@ -165,6 +184,50 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname, password })
+      });
+    },
+
+    // ---- Shop ----
+    getShop() {
+      return request('/api/shop');
+    },
+
+    // ---- Leaderboard ----
+    // Rank players by cleared-level count. `nickname` additionally asks the
+    // server for that player's own row + rank.
+    getLevelLeaderboard(nickname, limit = 50) {
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (nickname) qs.set('nickname', nickname);
+      return request('/api/leaderboard/levels?' + qs.toString());
+    },
+
+    // Shop action endpoints write to the caller's profile, so the session
+    // token (attached by request()) is what authorizes them.
+
+    buyItem(name, itemId) {
+      const caller = name && name.length ? name : this._currentPlayer();
+      return request('/api/players/' + encodeURIComponent(caller || 'guest') + '/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId })
+      });
+    },
+
+    equipWeapon(name, weaponId) {
+      const caller = name && name.length ? name : this._currentPlayer();
+      return request('/api/players/' + encodeURIComponent(caller || 'guest') + '/equip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weaponId })
+      });
+    },
+
+    useItem(name, itemId) {
+      const caller = name && name.length ? name : this._currentPlayer();
+      return request('/api/players/' + encodeURIComponent(caller || 'guest') + '/use-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId })
       });
     }
   };

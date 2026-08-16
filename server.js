@@ -6,7 +6,9 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const crypto = require('crypto');
+const { attachRealtime } = require('./realtime');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -30,6 +32,118 @@ const VALID_GAME_MODES = ['word-recognition', 'listening', 'spelling', 'sentence
 const TOTAL_LEVELS = 666;
 const WORLDS = 6;
 const LEVELS_PER_WORLD = 111;
+
+// ---------------------------------------------------------------- sessions
+// Stateless HMAC-signed tokens: the server keeps no session table. A token
+// embeds `nickname|expiryEpochMs` and is signed with a persistent secret
+// (data/session-secret, gitignored), so tokens survive restarts and need
+// no cleanup. Clients send them via the X-Player-Token header; the old
+// "X-Player header must equal the nickname" check was forgeable by anyone
+// who knew the nickname and has been removed.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const SECRET_FILE = path.join(DATA_DIR, 'session-secret');
+let _sessionSecret = null;
+
+function getSessionSecret() {
+  if (_sessionSecret) return _sessionSecret;
+  try { _sessionSecret = fs.readFileSync(SECRET_FILE, 'utf-8').trim(); } catch (e) { /* not created yet */ }
+  if (!_sessionSecret || _sessionSecret.length < 64) {
+    _sessionSecret = crypto.randomBytes(32).toString('hex');
+    try {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(SECRET_FILE, _sessionSecret + '\n', { mode: 0o600 });
+    } catch (err) {
+      console.error('Failed to persist session secret:', err.message);
+    }
+  }
+  return _sessionSecret;
+}
+
+function hmacPayload(payload) {
+  return crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('hex');
+}
+
+// token = base64url("nickname|expiryMs") + "." + hex hmac of that payload.
+function createSessionToken(nickname) {
+  const payload = nickname + '|' + (Date.now() + SESSION_TTL_MS);
+  return Buffer.from(payload, 'utf-8').toString('base64url') + '.' + hmacPayload(payload);
+}
+
+// Returns the nickname the token was minted for, or null when the token is
+// malformed, tampered with, or expired.
+function verifySessionToken(token) {
+  if (typeof token !== 'string') return null;
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  let payload;
+  try { payload = Buffer.from(token.slice(0, dot), 'base64url').toString('utf-8'); }
+  catch (e) { return null; }
+  const sig = Buffer.from(token.slice(dot + 1), 'utf-8');
+  const expected = Buffer.from(hmacPayload(payload), 'utf-8');
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(sig, expected)) return null;
+  const sep = payload.lastIndexOf('|');
+  if (sep <= 0) return null;
+  const nickname = payload.slice(0, sep);
+  const expiry = Number(payload.slice(sep + 1));
+  if (!Number.isInteger(expiry) || expiry < Date.now()) return null;
+  return isValidNickname(nickname) ? nickname : null;
+}
+
+// ---------------------------------------------------------------- shop
+// Shop catalog is server-authoritative for PRICES and OWNERSHIP. The client
+// mirrors the same ids + gameplay stats (public/js/shop.js) so firing logic
+// still works offline; only the server decides how coins are spent.
+const STARTING_WEAPON = 'wooden';
+
+// Weapons: one-time purchase, equippable, and their `stats` feed straight
+// into game.js firing (fireCooldown ms / bulletSpeed / bulletRadius /
+// multishot count / spread radians / ammoBonus / bullet color).
+const SHOP_WEAPONS = [
+  { id: 'wooden',      name: '木制猎枪', emoji: '🔫', price: 0,   desc: '猎人的第一把枪，稳定可靠。', stats: { fireCooldown: 320, bulletSpeed: 9,  bulletRadius: 6, multishot: 1, spread: 0,    ammoBonus: 0, color: '#ffd700' } },
+  { id: 'longbow',     name: '猎鹰长弓', emoji: '🏹', price: 120, desc: '弹道极快、命中判定大，射速较慢。', stats: { fireCooldown: 620, bulletSpeed: 14, bulletRadius: 10, multishot: 1, spread: 0,    ammoBonus: 0, color: '#ffd700' } },
+  { id: 'crossbow',    name: '疾风连弩', emoji: '⚡', price: 200, desc: '极速连发，附带额外弹药。', stats: { fireCooldown: 170, bulletSpeed: 10, bulletRadius: 5,  multishot: 1, spread: 0,    ammoBonus: 3, color: '#9ecbff' } },
+  { id: 'blunderbuss', name: '轰天火铳', emoji: '🧨', price: 320, desc: '一枪五弹扇形散射，近身火力十足。', stats: { fireCooldown: 700, bulletSpeed: 8,  bulletRadius: 5,  multishot: 5, spread: 0.55, ammoBonus: 2, color: '#ff9f43' } },
+  { id: 'starstaff',   name: '星辰法杖', emoji: '🌟', price: 500, desc: '星光弹极速飞行，弹药储备充足。', stats: { fireCooldown: 260, bulletSpeed: 16, bulletRadius: 8,  multishot: 1, spread: 0,    ammoBonus: 5, color: '#c9a6ff' } }
+];
+
+// Items: consumables. Counts live in player.inventory.items; using one in a
+// level applies the effect client-side and decrements the count server-side.
+const SHOP_ITEMS = [
+  { id: 'health-potion',  name: '生命药水', emoji: '❤️', price: 50,  desc: '立即回复 1 点生命（最多 3 点）。' },
+  { id: 'ammo-crate',     name: '弹药箱',   emoji: '🔋', price: 60,  desc: '本关立即补充 10 发子弹。' },
+  { id: 'guard-shield',   name: '守护护盾', emoji: '🛡️', price: 80,  desc: '获得 6 秒无敌护盾。' },
+  { id: 'time-hourglass', name: '时间沙漏', emoji: '⏳', price: 90,  desc: '本关剩余时间 +15 秒。' },
+  { id: 'stun-bomb',      name: '眩晕手雷', emoji: '💥', price: 100, desc: '眩晕全场小怪 4 秒。' }
+];
+
+// Look up an item id across both catalogs. Returns { kind, item } or null.
+function findShopItem(id) {
+  const weapon = SHOP_WEAPONS.find(w => w.id === id);
+  if (weapon) return { kind: 'weapon', item: weapon };
+  const item = SHOP_ITEMS.find(i => i.id === id);
+  if (item) return { kind: 'item', item };
+  return null;
+}
+
+// Normalize the shop fields on a (possibly legacy) player profile so every
+// consumer can trust inventory / equippedWeapon to be present and sane.
+function ensureShopFields(player) {
+  if (!player.inventory || typeof player.inventory !== 'object' || Array.isArray(player.inventory)) {
+    player.inventory = { weapons: [STARTING_WEAPON], items: {} };
+  } else {
+    if (!Array.isArray(player.inventory.weapons)) {
+      player.inventory.weapons = [STARTING_WEAPON];
+    } else if (!player.inventory.weapons.includes(STARTING_WEAPON)) {
+      player.inventory.weapons.unshift(STARTING_WEAPON);
+    }
+    if (!player.inventory.items || typeof player.inventory.items !== 'object' || Array.isArray(player.inventory.items)) {
+      player.inventory.items = {};
+    }
+  }
+  if (typeof player.equippedWeapon !== 'string' || !player.equippedWeapon) {
+    player.equippedWeapon = STARTING_WEAPON;
+  }
+}
 
 // Hard caps so the JSON store can't be flooded to unbounded disk growth.
 const MAX_SCORES = 5000;   // leaderboard entries retained
@@ -187,7 +301,7 @@ function savePlayers(data) {
         if (err) { reject(err); return; }
         fs.rename(tmp, PLAYERS_FILE, (err2) => {
           if (err2) reject(err2);
-          else { _playersCache.loadFailed = false; resolve(); }
+          else { _playersCache.loadFailed = false; invalidateLeaderboard(); resolve(); }
         });
       });
     });
@@ -199,55 +313,68 @@ function savePlayers(data) {
 }
 
 /**
- * Hash a password with a per-user random salt.
- * Stored format: `${saltHex}:${hashHex}` so we can verify without a separate
- * column for salt. The salt is 16 random bytes; the hash is SHA-256 of
- * `salt + ':' + password`. Using a unique salt per user defeats rainbow
- * tables and means two players who pick the same password still get
- * different stored values.
+ * Hash a password with scrypt (memory-hard KDF) and a per-user random salt.
+ * Stored format: `scrypt:<saltHex>:<hashHex>`.
  *
- * NOTE: SHA-256 + salt is a deliberate, conservative choice for a JSON-file
- * store with no native crypto module beyond `crypto` (no `bcrypt` dep).
- * It is *not* memory-hard; for higher-value credentials swap to scrypt.
+ * scrypt was chosen over the earlier salted SHA-256 because it is
+ * memory-hard, which makes offline brute-force of a stolen players.json
+ * dramatically more expensive. Legacy hashes still verify (see below) and
+ * are migrated to scrypt on the account's next successful login.
  */
-function hashPassword(password, saltHex) {
-  const salt = saltHex || crypto.randomBytes(16).toString('hex');
-  const hash = crypto.createHash('sha256').update(salt + ':' + password).digest('hex');
-  return salt + ':' + hash;
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keylen: 32 };
+
+function scryptHex(password, salt) {
+  return crypto.scryptSync(String(password), salt, SCRYPT_PARAMS.keylen, SCRYPT_PARAMS).toString('hex');
 }
 
-// Legacy hashes (first server version) are unsalted SHA-256 hex, 64 chars.
+// Constant-time equality for two hex strings (timingSafeEqual throws on
+// length mismatch, so check first — a length mismatch just means "wrong").
+function timingSafeHexEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a, 'utf-8'), Buffer.from(b, 'utf-8'));
+}
+
+function hashPassword(password, saltHex) {
+  const salt = saltHex || crypto.randomBytes(16).toString('hex');
+  return 'scrypt:' + salt + ':' + scryptHex(password, salt);
+}
+
+// True for hashes written by earlier server versions (verifyPassword still
+// understands both, and login migrates them in place).
+//   - v1: unsalted SHA-256 of the password, 64 hex chars.
+//   - v2: salted SHA-256, `saltHex:hashHex` (no "scrypt:" prefix).
 function isLegacyHash(stored) {
   return typeof stored === 'string' && /^[0-9a-f]{64}$/i.test(stored);
 }
 
 function verifyPassword(password, stored) {
   if (typeof stored !== 'string' || stored.length === 0) return false;
-  if (!stored.includes(':')) {
-    // Legacy format: plain unsalted SHA-256 of the password. Verify directly
-    // so old accounts can still log in (the login route migrates them).
-    if (!isLegacyHash(stored)) return false;
-    return crypto.createHash('sha256').update(password).digest('hex') === stored.toLowerCase();
+  if (stored.startsWith('scrypt:')) {
+    const parts = stored.split(':');
+    if (parts.length !== 3 || !/^[0-9a-f]+$/i.test(parts[1]) || !/^[0-9a-f]{64}$/i.test(parts[2])) return false;
+    return timingSafeHexEqual(scryptHex(password, parts[1]), parts[2].toLowerCase());
   }
-  const [salt] = stored.split(':');
-  return hashPassword(password, salt) === stored;
+  if (!stored.includes(':')) {
+    // v1 legacy format: plain unsalted SHA-256 of the password.
+    if (!isLegacyHash(stored)) return false;
+    return timingSafeHexEqual(crypto.createHash('sha256').update(password).digest('hex'), stored.toLowerCase());
+  }
+  // v2 legacy format: salted SHA-256 of `salt + ':' + password`.
+  const [salt, want] = stored.split(':');
+  return timingSafeHexEqual(crypto.createHash('sha256').update(salt + ':' + password).digest('hex'), (want || '').toLowerCase());
 }
 
 /**
- * Normalize an X-Player header value for comparison against the URL-path
- * nickname. Node decodes incoming header bytes as latin1, so a client that
- * sent raw UTF-8 bytes (e.g. a Chinese nickname) arrives mojibake-encoded,
- * while a client that sent the percent-encoded form arrives URL-encoded.
- * Accept any encoding that decodes to the path nickname (which Express has
- * already URL-decoded correctly).
+ * A caller is authorized to act on a profile iff they present a valid,
+ * unexpired session token (X-Player-Token) that was minted at login or
+ * register for exactly that nickname. Knowing the nickname alone proves
+ * nothing, so cross-account reads/writes are impossible without the
+ * account's token.
  */
 function isAuthorizedCaller(req, nickname) {
-  const caller = (req.get('X-Player') || '').trim();
-  if (!caller) return false;
-  const candidates = [caller];
-  try { candidates.push(decodeURIComponent(caller)); } catch (e) { /* not percent-encoded */ }
-  try { candidates.push(Buffer.from(caller, 'latin1').toString('utf8')); } catch (e) { /* ignore */ }
-  return candidates.some(c => c === nickname);
+  const token = (req.get('X-Player-Token') || '').trim();
+  if (!token) return false;
+  return verifySessionToken(token) === nickname;
 }
 
 /**
@@ -267,6 +394,8 @@ function createDefaultPlayer(nickname, ageGroup) {
     bossDefeated: [],  // world numbers whose boss is beaten
     coins: 50,
     skills: { hint: 3, shield: 2, crit: 2 },
+    inventory: { weapons: [STARTING_WEAPON], items: {} },
+    equippedWeapon: STARTING_WEAPON,
     completedLevels: [],
     createdAt: new Date().toISOString(),
     lastPlayAt: new Date().toISOString()
@@ -633,22 +762,81 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// ---------------------------------------------------------------- leaderboard
+// Ranks players by how many levels they have cleared. Cached in memory and
+// invalidated by savePlayers(); only self-chosen nicknames and game stats
+// are exposed (no credentials / no progress detail).
+
+const LEADERBOARD_TTL = 30 * 1000;
+const _leaderboardCache = { rows: null, at: 0 };
+
+function invalidateLeaderboard() {
+  _leaderboardCache.rows = null;
+  _leaderboardCache.at = 0;
+}
+
+// Build the ranked rows (desc: cleared levels, then coins, then recency).
+function buildLevelLeaderboard() {
+  const players = loadPlayers().players;
+  const rows = [];
+  for (const nick of Object.keys(players)) {
+    const p = players[nick];
+    if (!p || !p.passwordHash) continue; // registered accounts only
+    const cleared = Array.isArray(p.completedLevels) ? p.completedLevels.length : 0;
+    const maxLevel = (typeof p.maxLevel === 'number' && Number.isFinite(p.maxLevel)) ? p.maxLevel : 1;
+    rows.push({
+      nickname: nick,
+      cleared,
+      world: worldOfLevel(Math.min(TOTAL_LEVELS, Math.max(1, maxLevel))),
+      coins: (typeof p.coins === 'number' && Number.isFinite(p.coins)) ? p.coins : 0,
+      lastPlayAt: typeof p.lastPlayAt === 'string' ? p.lastPlayAt : ''
+    });
+  }
+  rows.sort((a, b) =>
+    b.cleared - a.cleared ||
+    b.coins - a.coins ||
+    String(b.lastPlayAt).localeCompare(String(a.lastPlayAt)));
+  return rows;
+}
+
+// GET /api/leaderboard/levels?limit=50&nickname=me -> rankings by cleared
+// level count. `nickname` additionally returns that player's own row+rank
+// (null when the name is unknown / not registered).
+app.get('/api/leaderboard/levels', (req, res) => {
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
+
+  if (!_leaderboardCache.rows || Date.now() - _leaderboardCache.at > LEADERBOARD_TTL) {
+    _leaderboardCache.rows = buildLevelLeaderboard();
+    _leaderboardCache.at = Date.now();
+  }
+  const rows = _leaderboardCache.rows;
+  const entries = rows.slice(0, limit).map((r, i) => Object.assign({ rank: i + 1 }, r));
+
+  let me = null;
+  const nickname = typeof req.query.nickname === 'string' ? req.query.nickname.trim() : '';
+  if (nickname && isValidNickname(nickname)) {
+    const idx = rows.findIndex(r => r.nickname === nickname);
+    if (idx >= 0) me = Object.assign({ rank: idx + 1 }, rows[idx]);
+  }
+  res.json({ total: rows.length, entries, me });
+});
+
 // ---------------------------------------------------------------- Player / Level API
 
 // GET /api/players/:nickname  ->  fetch a player profile (requires registration
-// AND that the caller proves they own the profile via X-Player header).
-// Without that gate any anonymous visitor could enumerate every player's
-// progress, coins, and world state by guessing / scraping nicknames.
+// AND a valid session token minted for that nickname). Without that gate any
+// anonymous visitor could enumerate every player's progress, coins, and
+// world state by guessing / scraping nicknames.
 app.get('/api/players/:nickname', (req, res) => {
   const nickname = (req.params.nickname || '').trim();
   if (!isValidNickname(nickname)) {
     return res.status(400).json({ error: '昵称格式不合法' });
   }
 
-  // Caller must be authenticated (header must match the requested nickname).
-  // Returning 401 (not 404) so a logged-in client knows it lost its session.
-  // isAuthorizedCaller normalizes encoding so URL-encoded / UTF-8 header
-  // variants of the same nickname still match the decoded path parameter.
+  // Caller must be authenticated (token must belong to the requested
+  // nickname). Returning 401 (not 404) so a logged-in client knows it lost
+  // its session.
   if (!isAuthorizedCaller(req, nickname)) {
     return res.status(401).json({ error: '请先登录' });
   }
@@ -665,6 +853,7 @@ app.get('/api/players/:nickname', (req, res) => {
     return res.status(404).json({ error: '该账号未注册' });
   }
 
+  ensureShopFields(player);
   // Return player data without password hash
   const { passwordHash: _, ...playerWithoutPassword } = player;
   res.json(playerWithoutPassword);
@@ -684,8 +873,8 @@ app.post('/api/players/:nickname/progress', (req, res) => {
     return res.status(400).json({ error: 'won 参数必须是布尔值' });
   }
 
-  // Auth gate: caller must own the profile (X-Player header == nickname).
-  // Without this, any client can rewrite another player's progress.
+  // Auth gate: caller must own the profile (valid session token for this
+  // nickname). Without this, any client can rewrite another player's progress.
   if (!isAuthorizedCaller(req, nickname)) {
     return res.status(401).json({ error: '请先登录' });
   }
@@ -696,8 +885,22 @@ app.post('/api/players/:nickname/progress', (req, res) => {
   if (!player) return res.status(404).json({ error: '玩家不存在' });
 
   // Defensive: legacy/corrupt profiles might be missing these fields.
-  if (!Array.isArray(player.completedLevels)) player.completedLevels = [];
-  if (!Array.isArray(player.bossDefeated)) player.bossDefeated = [];
+  if (!Array.isArray(player.completedLevels)) {
+    player.completedLevels = [];
+  } else {
+    // Normalize entries to integers so includes() with a number argument
+    // can never miss a string-typed entry (e.g. hand-edited players.json).
+    player.completedLevels = player.completedLevels
+      .map(Number)
+      .filter(n => Number.isInteger(n) && n >= 1 && n <= TOTAL_LEVELS);
+  }
+  if (!Array.isArray(player.bossDefeated)) {
+    player.bossDefeated = [];
+  } else {
+    player.bossDefeated = player.bossDefeated
+      .map(Number)
+      .filter(w => Number.isInteger(w) && w >= 1 && w <= WORLDS);
+  }
   if (typeof player.coins !== 'number' || !Number.isFinite(player.coins)) player.coins = 0;
   if (typeof player.maxLevel !== 'number' || !Number.isFinite(player.maxLevel)) player.maxLevel = 1;
   if (typeof player.currentLevel !== 'number' || !Number.isFinite(player.currentLevel)) player.currentLevel = 1;
@@ -740,6 +943,97 @@ app.post('/api/players/:nickname/progress', (req, res) => {
   }).catch(err => {
     res.status(500).json({ error: '保存失败: ' + err.message });
   });
+});
+
+// GET /api/shop  ->  public catalog (weapons + items). Prices and ownership
+// are server-authoritative; browsing needs no auth, buying does.
+app.get('/api/shop', (req, res) => {
+  res.json({ weapons: SHOP_WEAPONS, items: SHOP_ITEMS, startingWeapon: STARTING_WEAPON });
+});
+
+// POST /api/players/:nickname/buy  ->  spend coins on a weapon or item.
+app.post('/api/players/:nickname/buy', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const itemId = (req.body && req.body.itemId) || '';
+  const found = findShopItem(itemId);
+  if (!found) return res.status(400).json({ error: '商品不存在' });
+
+  const data = loadPlayers();
+  const player = data.players[nickname];
+  if (!player) return res.status(404).json({ error: '玩家不存在' });
+  ensureShopFields(player);
+  if (typeof player.coins !== 'number' || !Number.isFinite(player.coins)) player.coins = 0;
+
+  const { kind, item } = found;
+  if (kind === 'weapon' && player.inventory.weapons.includes(item.id)) {
+    return res.status(409).json({ error: '已拥有该武器' });
+  }
+  if (player.coins < item.price) {
+    return res.status(400).json({ error: '金币不足' });
+  }
+
+  player.coins -= item.price;
+  if (kind === 'weapon') {
+    player.inventory.weapons.push(item.id);
+  } else {
+    const n = Number(player.inventory.items[item.id]) || 0;
+    player.inventory.items[item.id] = Math.min(999, n + 1);
+  }
+  player.lastPlayAt = new Date().toISOString();
+  savePlayers(data).then(() => {
+    const { passwordHash: _, ...p } = player;
+    res.json({ success: true, player: p });
+  }).catch(err => res.status(500).json({ error: '保存失败: ' + err.message }));
+});
+
+// POST /api/players/:nickname/equip  ->  switch the equipped weapon.
+app.post('/api/players/:nickname/equip', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const weaponId = (req.body && req.body.weaponId) || '';
+  const data = loadPlayers();
+  const player = data.players[nickname];
+  if (!player) return res.status(404).json({ error: '玩家不存在' });
+  ensureShopFields(player);
+  if (!player.inventory.weapons.includes(weaponId)) {
+    return res.status(400).json({ error: '尚未拥有该武器' });
+  }
+  player.equippedWeapon = weaponId;
+  player.lastPlayAt = new Date().toISOString();
+  savePlayers(data).then(() => {
+    const { passwordHash: _, ...p } = player;
+    res.json({ success: true, player: p });
+  }).catch(err => res.status(500).json({ error: '保存失败: ' + err.message }));
+});
+
+// POST /api/players/:nickname/use-item  ->  consume one consumable. The game
+// applies the effect client-side; this endpoint persists the decrement.
+app.post('/api/players/:nickname/use-item', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const itemId = (req.body && req.body.itemId) || '';
+  const found = findShopItem(itemId);
+  if (!found || found.kind !== 'item') return res.status(400).json({ error: '道具不存在' });
+
+  const data = loadPlayers();
+  const player = data.players[nickname];
+  if (!player) return res.status(404).json({ error: '玩家不存在' });
+  ensureShopFields(player);
+  const count = Number(player.inventory.items[itemId]) || 0;
+  if (count <= 0) return res.status(400).json({ error: '道具数量不足' });
+  player.inventory.items[itemId] = count - 1;
+  player.lastPlayAt = new Date().toISOString();
+  savePlayers(data).then(() => {
+    const { passwordHash: _, ...p } = player;
+    res.json({ success: true, player: p });
+  }).catch(err => res.status(500).json({ error: '保存失败: ' + err.message }));
 });
 
 // GET /api/levels/:id  ->  configuration for a specific level
@@ -810,17 +1104,30 @@ app.post('/api/register', (req, res) => {
     // coins and skills — only add the credential. Without this, legacy
     // players are permanently locked out of both login and register.
     existing.passwordHash = hashPassword(password);
-    if (!Array.isArray(existing.completedLevels)) existing.completedLevels = [];
-    if (!Array.isArray(existing.bossDefeated)) existing.bossDefeated = [];
+    if (!Array.isArray(existing.completedLevels)) {
+      existing.completedLevels = [];
+    } else {
+      existing.completedLevels = existing.completedLevels
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n >= 1 && n <= TOTAL_LEVELS);
+    }
+    if (!Array.isArray(existing.bossDefeated)) {
+      existing.bossDefeated = [];
+    } else {
+      existing.bossDefeated = existing.bossDefeated
+        .map(Number)
+        .filter(w => Number.isInteger(w) && w >= 1 && w <= WORLDS);
+    }
     if (typeof existing.coins !== 'number' || !Number.isFinite(existing.coins)) existing.coins = 50;
     if (typeof existing.maxLevel !== 'number' || !Number.isFinite(existing.maxLevel)) existing.maxLevel = 1;
     if (typeof existing.currentLevel !== 'number' || !Number.isFinite(existing.currentLevel)) existing.currentLevel = 1;
     if (!existing.skills || typeof existing.skills !== 'object') existing.skills = { hint: 3, shield: 2, crit: 2 };
+    ensureShopFields(existing);
     existing.lastPlayAt = new Date().toISOString();
     savePlayers(data).then(() => {
-      // Return player data without password hash
+      // Return player data without password hash, plus a session token
       const { passwordHash: _, ...playerWithoutPassword } = existing;
-      res.status(201).json({ success: true, player: playerWithoutPassword });
+      res.status(201).json({ success: true, token: createSessionToken(trimmedName), player: playerWithoutPassword });
     }).catch(err => {
       res.status(500).json({ error: '注册失败: ' + err.message });
     });
@@ -842,11 +1149,11 @@ app.post('/api/register', (req, res) => {
   newPlayer.lastPlayAt = new Date().toISOString();
   
   data.players[trimmedName] = newPlayer;
-  
+
   savePlayers(data).then(() => {
-    // Return player data without password hash
+    // Return player data without password hash, plus a session token
     const { passwordHash: _, ...playerWithoutPassword } = newPlayer;
-    res.status(201).json({ success: true, player: playerWithoutPassword });
+    res.status(201).json({ success: true, token: createSessionToken(trimmedName), player: playerWithoutPassword });
   }).catch(err => {
     res.status(500).json({ error: '注册失败: ' + err.message });
   });
@@ -873,29 +1180,31 @@ app.post('/api/login', (req, res) => {
   // SECURITY: collapse every "credential wrong" case to the SAME error
   // message, with the SAME timing, so an attacker can't tell from the
   // response whether the nickname is registered, has no password yet
-  // (legacy profile), or simply had the wrong password. verifyPassword
-  // always performs exactly one hash (over the real stored hash, or over a
-  // constant dummy hash when the user doesn't exist), so all branches burn
-  // the same CPU.
+  // (legacy profile), or simply had the wrong password. When the user
+  // doesn't exist we still burn exactly one KDF call (against a constant
+  // dummy hash) so all branches cost the same CPU — but the dummy
+  // comparison result is discarded; only a real stored hash can verify.
   const dummyHash = hashPassword(password, '0'.repeat(32));
-  const stored = player && player.passwordHash;
-  const ok = verifyPassword(password, stored || dummyHash);
+  const stored = (player && typeof player.passwordHash === 'string') ? player.passwordHash : null;
+  const ok = stored ? verifyPassword(password, stored)
+                    : (verifyPassword(password, dummyHash), false);
   if (!ok) {
     return res.status(401).json({ error: '昵称或密码错误' });
   }
 
-  // Migrate legacy unsalted SHA-256 hashes to the salted format in place,
-  // so old accounts are upgraded on their first successful login.
-  if (isLegacyHash(stored)) {
+  // Migrate legacy password hashes (v1 unsalted / v2 salted SHA-256) to
+  // scrypt in place on the first successful login.
+  if (!stored.startsWith('scrypt:')) {
     player.passwordHash = hashPassword(password);
   }
 
+  ensureShopFields(player);
   // Update last play time
   player.lastPlayAt = new Date().toISOString();
   savePlayers(data).then(() => {
-    // Return player data without password hash
+    // Return player data without password hash, plus a fresh session token
     const { passwordHash: _, ...playerWithoutPassword } = player;
-    res.json({ success: true, player: playerWithoutPassword });
+    res.json({ success: true, token: createSessionToken(trimmedName), player: playerWithoutPassword });
   }).catch(err => {
     res.status(500).json({ error: '登录失败: ' + err.message });
   });
@@ -927,7 +1236,16 @@ app.use((err, req, res, next) => {
 
 // Default to loopback: nginx (deploy/nginx.conf) proxies public traffic to
 // 127.0.0.1:3000. Set HOST=0.0.0.0 to expose directly on the network.
-app.listen(PORT, HOST, () => {
+// The realtime multiplayer server shares this port via HTTP upgrade (/ws).
+const httpServer = http.createServer(app);
+attachRealtime(httpServer, {
+  verifySessionToken,
+  buildLevelConfig,
+  loadVocabulary,
+  TOTAL_LEVELS
+});
+httpServer.listen(PORT, HOST, () => {
   console.log(`\n🎮  Kids English Learning Game`);
-  console.log(`   Listening on http://${HOST}:${PORT}\n`);
+  console.log(`   Listening on http://${HOST}:${PORT}`);
+  console.log(`   Multiplayer (WebSocket) on ws://${HOST}:${PORT}/ws\n`);
 });

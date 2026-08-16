@@ -5,13 +5,13 @@
  *  - Vocabulary loads for chosen age
  *  - Level intro shows after starting
  *  - Game canvas becomes active
- *  - Player can move and collide with a monster
- *  - Question modal pops on collision
+ *  - Player can move and shoot; question modal pops when a bullet HITS
+ *    (player-monster contact is melee damage in the shooting design)
  *  - Win/lose flow works
  */
 const puppeteer = require('puppeteer-core');
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const BASE = 'http://localhost:' + PORT;
 
 const results = [];
@@ -75,18 +75,23 @@ function check(name, ok, detail = '') {
   const wordCount = await page.evaluate(() => (window._game && window._game.words) ? window._game.words.length : 0);
   check('\u8bcd\u6c47\u5e93\u52a0\u8f7d', wordCount > 50, '\u8bcd\u6570: ' + wordCount);
 
-  // Force a collision by moving the player to a monster's position
+  // Engage a monster: aim the player at a monster and fire — the question
+  // modal pops when a bullet hits (contact is melee damage, not a question).
   const moved = await page.evaluate(() => {
     const g = window._game;
-    if (!g || !g.monsters.length) return false;
-    // Teleport player right next to a monster
-    g.player.x = g.monsters[0].x + 10;
-    g.player.y = g.monsters[0].y;
+    if (!g || !g.monsters.length || !g.player) return false;
+    const m = g.monsters[0];
+    g.player.x = m.x - 120;
+    g.player.y = m.y;
+    const dx = m.x - g.player.x, dy = m.y - g.player.y;
+    const mag = Math.hypot(dx, dy) || 1;
+    g.player.facing = { x: dx / mag, y: dy / mag };
+    g._fireBullet();
     return true;
   });
   check('\u8fd1\u8ddd\u79fb\u52a8\u5b8c\u6210', moved);
 
-  // Wait a moment for the collision check + question modal to appear
+  // Wait a moment for the bullet to travel + question modal to appear
   await new Promise(r => setTimeout(r, 800));
   const modalShown = await page.$eval('#question-modal', el => !el.classList.contains('hidden'));
   check('\u63a5\u89e6\u540e\u95ee\u7b54\u6a21\u6001\u5f39\u51fa', modalShown);

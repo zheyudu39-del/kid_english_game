@@ -15,10 +15,12 @@
   // ---- Title screen wiring ----
   const nameInput = document.getElementById('player-name');
   const startBtn = document.getElementById('btn-start');
-  const ageButtons = document.querySelectorAll('.age-btn');
+  const ageButtons = document.querySelectorAll('#screen-title .age-btn');
   const saveInfo = document.getElementById('save-info');
 
-  const TOTAL = (window.Levels && Levels.TOTAL_LEVELS) || 666; // Fallback matches actual TOTAL_LEVELS in levels.js
+  // levels.js is loaded (defer) before main.js, so the constant is
+  // guaranteed to exist here; no fallback needed.
+  const TOTAL = window.Levels.TOTAL_LEVELS;
 
   // Helper to prevent duplicate event listeners
   function addClickOnce(btn, handler) {
@@ -77,7 +79,7 @@
   }
 
   // Prevent duplicate event listeners if script loads multiple times
-  const ageButtonsContainer = document.querySelector('.age-buttons-container');
+  const ageButtonsContainer = document.querySelector('#screen-title .age-buttons');
   if (ageButtonsContainer && !ageButtonsContainer.dataset.wired) {
     ageButtons.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -138,17 +140,12 @@
 
       // Go to level 1 (or resume). Clamp so a corrupt save can never send
       // us outside [1, TOTAL]. Await so the isStarting mutex stays held
-      // until the level intro is actually shown.
-      try {
-        // Clear any keys pressed while on the title screen so the new
-        // level doesn't start with a held direction.
-        if (game.input && typeof game.input.reset === 'function') game.input.reset();
-        const target = Math.max(1, Math.min(TOTAL, parseInt(game.maxUnlocked, 10) || 1));
-        await game.startLevel(target);
-      } catch (e) {
-        console.error('Failed to start level:', e);
-        Utils.toast('关卡启动失败，请重试');
-      }
+      // until the level intro is actually shown. startLevelSafe() clears
+      // held inputs, releases any stale input lock, guards against double
+      // starts, and recovers to the title screen if startLevel() throws
+      // part-way through.
+      const target = Math.max(1, Math.min(TOTAL, parseInt(game.maxUnlocked, 10) || 1));
+      await startLevelSafe(target);
     } finally {
       // Every path (success, vocab failure, startLevel failure, unexpected
       // throw) must re-arm the button and release the mutex.
@@ -157,6 +154,40 @@
       updateStartButton(); // Re-enable based on name input
     }
   });
+
+  // Shared starter for every "enter a level" path (start button, next /
+  // replay / retry). Guards against double-clicks firing two concurrent
+  // startLevel() calls, releases any stale input lock left behind by the
+  // auth-modal pause flow (a locked input returns a zero move vector and
+  // would freeze the new level), and recovers to the title screen if
+  // startLevel() throws after touching internal state (e.g. World
+  // construction fails or an intro DOM element is missing).
+  let levelStarting = false;
+  async function startLevelSafe(num) {
+    if (levelStarting) return;
+    levelStarting = true;
+    try {
+      // startLevel() resets game.paused itself, but only after the World
+      // is built; if it throws before that point a stuck pause would
+      // persist. Un-pausing early is safe here: these buttons are only
+      // reachable from non-playing screens (title / win / lose), and
+      // goHome() parks the game in state 'title' so the old level can
+      // never tick while the new one loads.
+      if (game.state !== 'playing') game.paused = false;
+      if (game.input && typeof game.input.setLocked === 'function') game.input.setLocked(false);
+      if (game.input && typeof game.input.reset === 'function') game.input.reset();
+      await game.startLevel(num);
+    } catch (e) {
+      console.error('Failed to start level:', e);
+      Utils.toast('关卡启动失败，请重试');
+      // startLevel() may have failed after switching internal state or
+      // partially building the level — park everything back on the title
+      // screen so the next attempt starts from a clean slate.
+      goHome();
+    } finally {
+      levelStarting = false;
+    }
+  }
 
   // ---- Level intro ----
   addClickOnce(document.getElementById('btn-go'), () => {
@@ -168,32 +199,52 @@
     const next = game.currentLevelNum + 1;
     if (next > TOTAL) {
       Utils.toast('🎉 恭喜通关全部 ' + TOTAL + ' 关！回到第 1 关继续挑战');
-      game.startLevel(1); // maxUnlocked is preserved
+      startLevelSafe(1); // maxUnlocked is preserved (endLevel clamps via Math.max)
     } else {
-      game.startLevel(next);
+      startLevelSafe(next);
     }
   });
 
   addClickOnce(document.getElementById('btn-replay'), () => {
-    game.startLevel(game.currentLevelNum);
+    startLevelSafe(game.currentLevelNum);
   });
 
   addClickOnce(document.getElementById('btn-retry'), () => {
-    game.startLevel(game.currentLevelNum);
+    startLevelSafe(game.currentLevelNum);
   });
 
   addClickOnce(document.getElementById('btn-home-win'), goHome);
   addClickOnce(document.getElementById('btn-home-lose'), goHome);
+
+  // ---- Shop entry points ----
+  // Both the title-screen wallet button and the win-screen button open the
+  // same ShopModule. ShopModule.open() pauses a running game itself (via
+  // pauseForModal) and resumes on close, so no extra state handling here.
+  addClickOnce(document.getElementById('btn-shop'), () => {
+    if (window.ShopModule) window.ShopModule.open();
+  });
+  addClickOnce(document.getElementById('btn-shop-win'), () => {
+    if (window.ShopModule) window.ShopModule.open();
+  });
 
   function goHome() {
     // Pause game loop to prevent performance issues and state anomalies
     if (game.state && game.state !== 'title') {
       game.paused = true;
     }
+    // Park the game in the title state so a stale 'playing'/'win'/'lose'
+    // state can never let the old level tick (e.g. while the next
+    // startLevel() is still loading) or resurrect behind the title screen.
+    game.state = 'title';
     // Drop any held direction keys / joystick drag so the next level
-    // doesn't start with the player already moving. (startLevel() itself
-    // clears game.paused, so this pause can never become permanent.)
+    // doesn't start with the player already moving. Also release a stale
+    // modal input lock: pauseForModal() locks the input while an auth
+    // modal is open, and if the level ended while that modal was up the
+    // lock can survive the resume path — a locked input would freeze the
+    // next level. (startLevel() itself clears game.paused, so the pause
+    // above can never become permanent.)
     if (game.input && typeof game.input.reset === 'function') game.input.reset();
+    if (game.input && typeof game.input.setLocked === 'function') game.input.setLocked(false);
     game.showScreen('screen-title');
     game.showHUD(false);
     // Re-render save info

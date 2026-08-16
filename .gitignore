@@ -5,6 +5,19 @@ npm-debug.log*
 .DS_Store
 test-output/
 
+# Runtime logs
+*.log
+
+# Scratch / work files
+_vocab_partial.json
+
+# Local agent session artifacts
+.zcode/
+
 # Player + score data contain kid nicknames and progress — never commit them.
 data/players.json
 data/scores.json
+
+# Session-signing secret and corrupt-store backups written by server.js
+data/session-secret
+data/*.corrupt-*

@@ -5,7 +5,7 @@
   class Input {
     constructor() {
       this.state = {
-        up: false, down: false, left: false, right: false
+        up: false, down: false, left: false, right: false, fire: false
       };
       this._touchActive = false;
       this._touchVec = { x: 0, y: 0 };
@@ -15,6 +15,7 @@
       this._locked = false;
       this._setupKeyboard();
       this._setupJoystick();
+      this._setupFireButton();
       this._isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
     }
 
@@ -34,6 +35,7 @@
         this.state.down = false;
         this.state.left = false;
         this.state.right = false;
+        this.state.fire = false;
         this._touchActive = false;
         this._touchVec.x = 0;
         this._touchVec.y = 0;
@@ -58,6 +60,7 @@
         if (k === 'arrowdown' || k === 's')  { this.state.down = true; e.preventDefault(); }
         if (k === 'arrowleft' || k === 'a')  { this.state.left = true; e.preventDefault(); }
         if (k === 'arrowright' || k === 'd') { this.state.right = true; e.preventDefault(); }
+        if (k === ' ' || k === 'spacebar' || k === 'j') { this.state.fire = true; e.preventDefault(); }
       });
       window.addEventListener('keyup', e => {
         const k = e.key.toLowerCase();
@@ -65,6 +68,7 @@
         if (k === 'arrowdown' || k === 's')  this.state.down = false;
         if (k === 'arrowleft' || k === 'a')  this.state.left = false;
         if (k === 'arrowright' || k === 'd') this.state.right = false;
+        if (k === ' ' || k === 'spacebar' || k === 'j') this.state.fire = false;
       });
       // If the window loses focus (alt-tab / clicking outside) while a key
       // is held, the keyup event is lost and the direction stays stuck.
@@ -83,6 +87,7 @@
       this.state.down = false;
       this.state.left = false;
       this.state.right = false;
+      this.state.fire = false;
       this._touchActive = false;
       this._touchVec.x = 0;
       this._touchVec.y = 0;
@@ -131,7 +136,11 @@
         this._touchVec.y = dy / maxDist;
       };
       const end = (e) => {
-        if (e) e.preventDefault();
+        // preventDefault is only needed for touch events (it suppresses the
+        // synthetic mouse events and iOS double-tap zoom). On a real window
+        // mouseup it does nothing useful and would break native gestures
+        // elsewhere on the page (text selection, focus changes).
+        if (e && e.type !== 'mouseup') e.preventDefault();
         this._touchActive = false;
         this._touchVec.x = 0;
         this._touchVec.y = 0;
@@ -153,8 +162,32 @@
       window.addEventListener('mouseup', end);
     }
 
-    showJoystick() { document.getElementById('joystick').classList.remove('hidden'); }
-    hideJoystick() { document.getElementById('joystick').classList.add('hidden'); }
+    _setupFireButton() {
+      const btn = document.getElementById('fire-btn');
+      if (!btn) return;
+      const press = (e) => {
+        if (this._locked) return;
+        e.preventDefault();
+        this.state.fire = true;
+      };
+      const release = () => { this.state.fire = false; };
+      btn.addEventListener('pointerdown', press);
+      btn.addEventListener('pointerup', release);
+      btn.addEventListener('pointerleave', release);
+      btn.addEventListener('pointercancel', release);
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    showJoystick() {
+      document.getElementById('joystick').classList.remove('hidden');
+      const fb = document.getElementById('fire-btn');
+      if (fb) fb.classList.remove('hidden');
+    }
+    hideJoystick() {
+      document.getElementById('joystick').classList.add('hidden');
+      const fb = document.getElementById('fire-btn');
+      if (fb) fb.classList.add('hidden');
+    }
 
     // Returns { x, y, magnitude } of the current input as a normalized direction
     getMoveVector() {

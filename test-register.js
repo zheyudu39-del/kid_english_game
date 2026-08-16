@@ -11,7 +11,7 @@
  */
 const puppeteer = require('puppeteer-core');
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const BASE = 'http://localhost:' + PORT;
 
 const results = [];

@@ -353,6 +353,18 @@
     if (game && game.isModalPaused && game.isModalPaused()) {
       game.resumeFromModal();
     }
+    // resumeFromModal() deliberately skips unpausing/unlocking when the
+    // level is no longer PLAYING (e.g. a pending endLevel timer resolved
+    // while the auth modal was open). The input lock set by
+    // pauseForModal() would then survive and freeze the next level —
+    // getMoveVector() returns a zero vector while locked. Release any
+    // lock that no modal pause owns anymore.
+    if (game && game.input &&
+        typeof game.input.isLocked === 'function' &&
+        typeof game.input.setLocked === 'function' &&
+        game.input.isLocked() && game.state !== 'playing') {
+      game.input.setLocked(false);
+    }
     if (lastFocus && typeof lastFocus.focus === 'function') {
       try { lastFocus.focus({ preventScroll: true }); } catch (e) { lastFocus.focus(); }
     }
@@ -360,39 +372,18 @@
   }
 
   // Fetch the authoritative profile for the locally "logged-in" nickname.
-  // Note: API.getPlayer() sends no X-Player header and would always get a
-  // 401 from the server's ownership gate, so we must fetch with the header
-  // ourselves. Resolves with the player JSON, or rejects with an Error
-  // carrying `.status` (401/404) or no status (network failure/timeout).
+  // Delegates to the shared API client (which attaches the session token
+  // and normalizes errors: `.status` on HTTP failures, none on network
+  // errors / timeouts). Resolves with the player JSON.
   function fetchProfile(nickname) {
-    return new Promise((resolve, reject) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      fetch('/api/players/' + encodeURIComponent(nickname), {
-        headers: { 'X-Player': nickname },
-        signal: controller.signal
-      }).then(res => {
-        clearTimeout(timer);
-        if (!res.ok) {
-          const err = new Error('profile fetch failed');
-          err.status = res.status;
-          reject(err);
-          return;
-        }
-        return res.json().then(resolve, () => reject(new Error('invalid profile payload')));
-      }).catch(err => {
-        clearTimeout(timer);
-        const e = new Error(err && err.name === 'AbortError' ? 'profile fetch timeout' : (err && err.message) || 'profile fetch failed');
-        e.status = err && err.status;
-        reject(e);
-      });
-    });
+    return window.API.getOwnProfile(nickname);
   }
 
   // Silently drop an invalid local session (account deleted / password
   // changed server-side) and reset the title screen to the guest state.
   function clearSession() {
     try { localStorage.removeItem(LOGGED_IN_KEY); } catch (e) { /* non-fatal */ }
+    if (window.API && window.API.setToken) window.API.setToken(null);
     loggedInNickname = null;
     const nameInput = document.getElementById('player-name');
     const startBtn = document.getElementById('btn-start');
@@ -441,7 +432,7 @@
     if (profile && game) {
       game.playerName = nickname;
       game.ageGroup = profile.ageGroup || game.ageGroup;
-      const total = (window.Levels && window.Levels.TOTAL_LEVELS) || 666;
+      const total = window.Levels.TOTAL_LEVELS;
       game.maxUnlocked = Math.max(1, Math.min(total, parseInt(profile.maxLevel, 10) || 1));
       if (typeof profile.coins === 'number' && Number.isFinite(profile.coins)) {
         game.coins = profile.coins;
@@ -582,8 +573,13 @@
       Utils.toast('登录成功！');
       release();
 
-      // Persist ONLY the nickname; passwords never touch localStorage.
+      // Persist ONLY the nickname + session token; passwords never touch
+      // localStorage. The token authorizes all subsequent profile/progress
+      // requests (sent as X-Player-Token by the shared API client).
       try { localStorage.setItem(LOGGED_IN_KEY, nickname); } catch (e) { /* non-fatal */ }
+      if (result && result.token && window.API && window.API.setToken) {
+        window.API.setToken(result.token);
+      }
       loggedInNickname = nickname;
 
       // Apply the new state to the title screen and game instance
@@ -597,7 +593,7 @@
         game.ageGroup = result.player.ageGroup || game.ageGroup;
         // Server profile is authoritative: maxLevel is the next unlocked
         // level; coins is the server-side total.
-        const total = (window.Levels && window.Levels.TOTAL_LEVELS) || 666;
+        const total = window.Levels.TOTAL_LEVELS;
         game.maxUnlocked = Math.max(1, Math.min(total, parseInt(result.player.maxLevel, 10) || 1));
         if (typeof result.player.coins === 'number' && Number.isFinite(result.player.coins)) {
           game.coins = result.player.coins;
@@ -637,8 +633,9 @@
       } catch (e) { /* non-fatal */ }
     }
 
-    // Clear the persistent login marker
+    // Clear the persistent login marker and the session token
     try { localStorage.removeItem(LOGGED_IN_KEY); } catch (e) { /* non-fatal */ }
+    if (window.API && window.API.setToken) window.API.setToken(null);
     loggedInNickname = null;
 
     // Reset in-memory game state for the now-guest player. We DO reset
@@ -654,6 +651,10 @@
       game.coins = 0;
       game.score = 0;
       game.ageGroup = 7; // Constructor default; must not leak to next user
+      // Park the game loop on the title state and release any stale modal
+      // input lock so the next player starts from a clean, movable slate.
+      game.state = 'title';
+      if (game.input && typeof game.input.setLocked === 'function') game.input.setLocked(false);
     }
 
     // Reset title screen widgets
@@ -675,7 +676,7 @@
 
   function updateSaveInfo(player) {
     const saveInfo = document.getElementById('save-info');
-    const TOTAL = (window.Levels && window.Levels.TOTAL_LEVELS) || 666;
+    const TOTAL = window.Levels.TOTAL_LEVELS;
 
     if (!saveInfo) return;
 

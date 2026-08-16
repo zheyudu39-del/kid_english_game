@@ -230,60 +230,6 @@
     }
   }
 
-  // Convenience: list of all 6 worlds, always available.
-  function listWorlds() { return WORLDS; }
-
-  // Total number of levels.
-  function totalLevels() { return TOTAL_LEVELS; }
-
-  // World that this level belongs to.
-  function worldOfLevel(levelNum) {
-    return Math.min(6, Math.max(1, Math.ceil(levelNum / LEVELS_PER_WORLD)));
-  }
-
-  // Server-side mirror of unlock logic. Level N is unlocked iff
-  //   N === 1, OR
-  //   the previous level (N-1) was already beaten, OR
-  //   N is the first level of a world >=2 AND the previous world boss
-  //   has been beaten.
-  // Frontend doesn't track bossDefeated separately, so we use a
-  // pragmatic proxy: any level <= maxUnlocked is playable, AND the
-  // first level of each world is also playable if the previous world's
-  // boss was beaten. Because maxUnlocked === maxCompleted + 1, "boss
-  // level B beaten" is equivalent to maxUnlocked >= B + 1. Requiring
-  // only maxUnlocked >= B (i.e. having beaten B-1, the level just
-  // before the boss) was MORE lenient than the server's
-  // isLevelUnlockedServer (which demands bossDefeated of the previous
-  // world): the frontend would let the player start the next world
-  // while the server rejected the win submission, silently losing
-  // that progress.
-  function isUnlocked(levelNum, maxUnlocked) {
-    // Validate inputs
-    const lvl = Number(levelNum);
-    if (!Number.isFinite(lvl) || lvl < 1) return false;
-
-    const max = Number(maxUnlocked) || 0;
-
-    // Level 1 is always unlocked (entry point)
-    if (lvl === 1) return true;
-
-    // Any level at or below the player's max unlocked is playable
-    if (max >= lvl) return true;
-
-    // Get world info for this level
-    const cfg = getLevel(lvl);
-
-    // First level of world >= 2: require the previous world's boss
-    // (i.e., the last level of the previous world) to be beaten.
-    // maxUnlocked >= lastOfPrev + 1  <=>  level lastOfPrev completed.
-    if (cfg.worldProgress === 1 && cfg.world > 1) {
-      const lastOfPrev = (cfg.world - 1) * LEVELS_PER_WORLD;
-      return max >= lastOfPrev + 1;
-    }
-
-    return false;
-  }
-
   window.Levels = {
     WORLDS,
     TOTAL_LEVELS,
@@ -291,12 +237,6 @@
     loadAll,
     getWorld,
     getLevel,
-    getLevelAsync,
-    listWorlds,
-    totalLevels,
-    worldOfLevel,
-    isUnlocked,
-    // For debugging only
-    _cache: { get meta() { return _meta; }, get byNumber() { return _byNumber; } }
+    getLevelAsync
   };
 })();

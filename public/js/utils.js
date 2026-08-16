@@ -35,10 +35,6 @@
       return v < min ? min : v > max ? max : v;
     },
 
-    lerp(a, b, t) {
-      return a + (b - a) * t;
-    },
-
     // Distance between two {x,y} points
     dist(a, b) {
       const dx = a.x - b.x;
@@ -50,14 +46,6 @@
     aabb(a, b) {
       return Math.abs(a.x - b.x) < (a.w + b.w) / 2 &&
              Math.abs(a.y - b.y) < (a.h + b.h) / 2;
-    },
-
-    escapeHtml(s) {
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
     },
 
     // Show a transient toast
@@ -106,6 +94,7 @@
         else if (type === 'catch') { tone(523, now, 0.08); tone(659, now + 0.08, 0.08); tone(784, now + 0.16, 0.15); }
         else if (type === 'coin') { tone(988, now, 0.05); tone(1319, now + 0.05, 0.1); }
         else if (type === 'hit')   { tone(110, now, 0.2, 'sawtooth', 0.1); }
+        else if (type === 'shoot') { tone(880, now, 0.04, 'square', 0.05); tone(620, now + 0.04, 0.05, 'square', 0.04); }
         else if (type === 'win')   { tone(523, now, 0.12); tone(659, now + 0.12, 0.12); tone(784, now + 0.24, 0.12); tone(1047, now + 0.36, 0.3); }
         else                       { tone(440, now, 0.05); }
       } catch (err) { /* audio not available */ }

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0f0f23">
@@ -41,13 +41,21 @@
           <span class="hud-label">目标</span>
           <span id="hud-target" aria-label="已捕获小怪数">0/5</span>
         </div>
+        <div class="hud-ammo" id="hud-ammo">
+          <span class="hud-label">🔫 子弹</span>
+          <span id="hud-ammo-num" aria-label="剩余子弹">10</span>
+        </div>
         <div class="hud-time">
           <span class="hud-label">⏱</span>
           <span id="hud-time" aria-label="剩余时间秒数">60</span>
         </div>
         <div class="hud-combo hidden" id="hud-combo">COMBO x0</div>
       </div>
+      <div class="hud-mp hidden" id="hud-mp" role="status" aria-label="联机对战计分"></div>
     </div>
+
+    <!-- In-game consumable item bar (rendered by game.js, visible while playing) -->
+    <div id="item-bar" class="item-bar hidden" role="toolbar" aria-label="使用道具"></div>
 
     <!-- Question modal (paused while visible) -->
     <div id="question-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-word" aria-describedby="modal-prompt">
@@ -111,7 +119,7 @@
         <form class="title-form" autocomplete="off" onsubmit="return false">
           <label class="title-field">
             <span class="title-field__icon" aria-hidden="true">🪪</span>
-            <input type="text" id="player-name" class="name-input" placeholder="输入你的猎人代号" maxlength="10" autocomplete="off" spellcheck="false" aria-label="玩家昵称" required>
+            <input type="text" id="player-name" class="name-input" placeholder="输入你的猎人代号" maxlength="12" autocomplete="off" spellcheck="false" aria-label="玩家昵称" required>
           </label>
 
           <div class="age-select">
@@ -163,6 +171,25 @@
             </button>
           </div>
 
+          <div class="title-wallet" aria-label="金币与商城">
+            <span class="title-wallet__coins" id="title-coins" role="status">🪙 0</span>
+            <button id="btn-shop" class="big-btn shop-btn" type="button" aria-label="打开商城">
+              <span class="btn-emoji" aria-hidden="true">🛒</span>
+              <span>商城</span>
+            </button>
+          </div>
+
+          <div class="mode-buttons">
+            <button id="btn-multiplayer" class="big-btn mp-entry-btn" type="button" aria-label="联机对战">
+              <span class="btn-emoji" aria-hidden="true">⚔️</span>
+              <span>联机对战</span>
+            </button>
+            <button id="btn-leaderboard" class="big-btn lb-entry-btn" type="button" aria-label="闯关排行榜">
+              <span class="btn-emoji" aria-hidden="true">🏆</span>
+              <span>排行榜</span>
+            </button>
+          </div>
+
           <button id="btn-start" class="big-btn start-btn" type="button" disabled aria-label="开始狩猎">
             <span class="btn-emoji" aria-hidden="true">⚔️</span>
             <span>开始狩猎</span>
@@ -185,7 +212,7 @@
         <form id="register-form" autocomplete="off">
           <div class="form-group">
             <label for="register-nickname">🪪 昵称</label>
-            <input type="text" id="register-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="10" minlength="1" pattern="[A-Za-z0-9_\-\u4e00-\u9fa5]{1,12}" required>
+            <input type="text" id="register-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="12" minlength="1" pattern="[A-Za-z0-9_\-\u4e00-\u9fa5]{1,12}" required>
           </div>
           <div class="form-group">
             <label for="register-password">🔒 密码</label>
@@ -243,7 +270,7 @@
         <form id="login-form" autocomplete="off">
           <div class="form-group">
             <label for="login-nickname">🪪 昵称</label>
-            <input type="text" id="login-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="10" minlength="1" required>
+            <input type="text" id="login-nickname" name="nickname" class="form-input" placeholder="输入你的猎人代号" maxlength="12" minlength="1" required>
           </div>
           <div class="form-group">
             <label for="login-password">🔒 密码</label>
@@ -254,6 +281,97 @@
             还没账号？<a href="#" id="link-to-register" class="form-link">立即注册</a>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Shop screen -->
+    <div id="screen-shop" class="screen screen--shop hidden">
+      <div class="shop-panel">
+        <div class="shop-header">
+          <h2 class="shop-title">🛒 猎人商城</h2>
+          <div class="shop-coins" id="shop-coins">🪙 0</div>
+          <button id="btn-shop-close" class="close-modal-btn" aria-label="关闭商城">✕</button>
+        </div>
+        <div class="shop-tabs" role="tablist">
+          <button id="tab-weapons" class="shop-tab active" type="button" role="tab" aria-selected="true">🔫 武器</button>
+          <button id="tab-items" class="shop-tab" type="button" role="tab" aria-selected="false">🎒 道具</button>
+        </div>
+        <div class="shop-grid" id="shop-grid" role="tabpanel"></div>
+        <div class="shop-foot" id="shop-foot"></div>
+      </div>
+    </div>
+
+    <!-- Level-clearing leaderboard -->
+    <div id="screen-leaderboard" class="screen screen--board hidden">
+      <div class="board-panel">
+        <div class="board-header">
+          <h2 class="board-title">🏆 闯关排行榜</h2>
+          <button id="btn-board-refresh" class="board-refresh" type="button" aria-label="刷新排行榜">🔄</button>
+          <button id="btn-board-close" class="close-modal-btn" aria-label="关闭排行榜">✕</button>
+        </div>
+        <div class="board-me" id="board-me" aria-label="我的排名"></div>
+        <div class="board-table" id="board-table" role="list" aria-label="排行榜列表"></div>
+        <div class="board-foot" id="board-foot">按通关关卡数排名</div>
+      </div>
+    </div>
+
+    <!-- Multiplayer lobby -->
+    <div id="screen-mp" class="screen screen--mp hidden">
+      <div class="mp-panel">
+        <div class="mp-header">
+          <h2 class="mp-title">⚔️ 联机对战</h2>
+          <button id="btn-mp-close" class="close-modal-btn" aria-label="关闭联机大厅">✕</button>
+        </div>
+
+        <div id="mp-menu" class="mp-view">
+          <div class="mp-level">
+            <span class="mp-level__label">对战关卡</span>
+            <button id="mp-level-minus" class="mp-level__btn" type="button" aria-label="降低关卡">−</button>
+            <span id="mp-level-num" class="mp-level__num">第 1 关</span>
+            <button id="mp-level-plus" class="mp-level__btn" type="button" aria-label="提高关卡">＋</button>
+          </div>
+          <button id="btn-mp-create" class="big-btn mp-action" type="button">
+            <span class="btn-emoji" aria-hidden="true">🏠</span><span>创建房间</span>
+          </button>
+          <button id="btn-mp-quick" class="big-btn mp-action" type="button">
+            <span class="btn-emoji" aria-hidden="true">⚡</span><span>快速匹配</span>
+          </button>
+          <div class="mp-join">
+            <input type="text" id="mp-join-code" class="mp-join__input" inputmode="numeric" maxlength="4" placeholder="房间码" aria-label="房间码" autocomplete="off">
+            <button id="btn-mp-join" class="big-btn mp-action" type="button">
+              <span class="btn-emoji" aria-hidden="true">🚪</span><span>加入</span>
+            </button>
+          </div>
+          <div class="mp-note">2-4 名猎人同场竞速，先捕获目标数量者获胜</div>
+        </div>
+
+        <div id="mp-searching" class="mp-view hidden">
+          <div class="mp-searching__spin" aria-hidden="true">⚡</div>
+          <div class="mp-searching__text">正在寻找对手…</div>
+          <button id="btn-mp-cancel-quick" class="big-btn ghost" type="button">取消匹配</button>
+        </div>
+
+        <div id="mp-room" class="mp-view hidden">
+          <div class="mp-code-label">房间码（告诉你的朋友）</div>
+          <div class="mp-code" id="mp-code" aria-label="房间码">0000</div>
+          <div class="mp-players" id="mp-players" role="list" aria-label="房间成员"></div>
+          <div class="mp-hint" id="mp-hint">等待房主开始对战…</div>
+          <button id="btn-mp-start" class="big-btn mp-action hidden" type="button">🎯 开始对战</button>
+          <button id="btn-mp-leave" class="big-btn ghost" type="button">离开房间</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Multiplayer result -->
+    <div id="screen-mp-result" class="screen hidden">
+      <div class="result-card mp">
+        <div class="result-emoji" id="mp-result-emoji">🏆</div>
+        <h2 id="mp-result-title">对战结束</h2>
+        <div class="mp-standings" id="mp-standings" role="list" aria-label="对战排名"></div>
+        <div class="result-buttons">
+          <button id="btn-mp-lobby" class="big-btn" type="button">返回房间</button>
+          <button id="btn-mp-home" class="big-btn ghost" type="button">返回主页</button>
+        </div>
       </div>
     </div>
 
@@ -278,9 +396,11 @@
           <div>分数: <span id="result-score">0</span></div>
           <div>捕获: <span id="result-captured">0</span> 只小怪</div>
           <div>最高连击: <span id="result-combo">x0</span></div>
+          <div>金币奖励: <span id="result-coins">0</span> 🪙</div>
         </div>
         <div class="result-buttons">
           <button id="btn-next-level" class="big-btn" aria-label="进入下一关">下一关</button>
+          <button id="btn-shop-win" class="big-btn shop-btn" aria-label="去商城购买装备">🛒 商城</button>
           <button id="btn-replay" class="big-btn ghost" aria-label="重玩本关">重玩</button>
           <button id="btn-home-win" class="big-btn ghost" aria-label="返回主页">返回主页</button>
         </div>
@@ -310,6 +430,9 @@
       </div>
     </div>
 
+    <!-- Fire button (mobile, mirrors the joystick on the right) -->
+    <button id="fire-btn" class="fire-btn hidden" aria-label="射击">🔫</button>
+
     <!-- Toast notifications -->
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
@@ -323,6 +446,7 @@
   <script src="js/api.js" defer></script>
   <script src="js/tts.js" defer></script>
   <script src="js/levels.js" defer></script>
+  <script src="js/shop.js" defer></script>
   <script src="js/player.js" defer></script>
   <script src="js/monster.js" defer></script>
   <script src="js/coin.js" defer></script>
@@ -330,8 +454,12 @@
   <script src="js/question.js" defer></script>
   <script src="js/particle.js" defer></script>
   <script src="js/input.js" defer></script>
+  <script src="js/projectile.js" defer></script>
   <script src="js/game.js" defer></script>
   <script src="js/register.js" defer></script>
+  <script src="js/net.js" defer></script>
+  <script src="js/mp.js" defer></script>
+  <script src="js/leaderboard.js" defer></script>
   <script src="js/main.js" defer></script>
 </body>
 </html>

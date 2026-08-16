@@ -19,18 +19,37 @@
       this.life = 0;
       this.alive = true;
       this.collected = false;
+      this.resting = false; // true once settled on the ground
       this.bobT = Utils.randFloat(0, Math.PI * 2);
     }
 
     update(dtMs) {
       this.life += dtMs;
       this.bobT += dtMs * 0.008;
+      if (this.resting) return;
       // Simple physics
       this.vy += this.gravity;
       this.x += this.vx;
       this.y += this.vy;
       this.vx *= 0.98;
-      if (this.vy > 0 && this.y > this.groundY) this.vy *= -0.4; // bounce off ground
+      if (this.vy > 0 && this.y > this.groundY) {
+        if (this.vy > 0.4) {
+          // Bounce off the ground: snap back to the ground line and lose
+          // energy. y must be snapped — without it the coin sinks below
+          // the floor a little more every frame.
+          this.y = this.groundY;
+          this.vy *= -0.4;
+        } else {
+          // Too weak to bounce again. Without this rest state the bounce
+          // keeps firing every frame with a decaying velocity smaller than
+          // gravity, so the coin jitters and slowly sinks through the
+          // floor until it expires.
+          this.y = this.groundY;
+          this.vy = 0;
+          this.vx = 0;
+          this.resting = true;
+        }
+      }
     }
 
     isExpired() {
