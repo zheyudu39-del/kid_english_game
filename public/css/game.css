@@ -2213,21 +2213,38 @@ html, body {
   border-top: 2px dashed rgba(255, 255, 255, 0.15);
 }
 
-.title-actions,
-.title-toolbar .mode-buttons {
+.title-actions {
   display: flex;
   gap: 8px;
   width: 100%;
   margin: 0;
 }
 
-.title-actions .big-btn,
-.title-toolbar .mode-buttons .big-btn {
+/* Mode entries (地图/联机/排行/商城/错词本/报告) stack in a 3×2 grid.
+   Six flex siblings in one row only get ~56px each inside the 380px form
+   column and the Chinese labels overflow their button frames. */
+.title-toolbar .mode-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+}
+
+.title-actions .big-btn {
   flex: 1 1 0;
   min-width: 0;
   font-size: clamp(13px, 2.8vw, 15px);
   padding: 8px 6px;
   letter-spacing: 0;
+}
+
+.title-toolbar .mode-buttons .big-btn {
+  min-width: 0;
+  font-size: clamp(13px, 2.8vw, 15px);
+  padding: 8px 4px;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .title-toolbar .title-wallet__coins {
@@ -2277,9 +2294,8 @@ html, body {
   }
 }
 
-/* Phones: let the two button groups share rows tightly */
+/* Phones: the 3×2 grid already keeps every label inside its button */
 @media (max-width: 480px) {
-  .title-toolbar .mode-buttons { flex-direction: row; }
   .title-actions .big-btn,
   .title-toolbar .mode-buttons .big-btn { padding: 7px 4px; }
 }

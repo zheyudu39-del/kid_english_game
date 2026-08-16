@@ -51,9 +51,23 @@ function check(name, ok, detail) {
         })(),
         toolbarBtns: document.querySelectorAll('.title-toolbar button').length,
         toolbarRows: (() => {
-          const btns = Array.from(document.querySelectorAll('.title-toolbar button'));
-          const rows = new Set(btns.map(b => Math.round(b.getBoundingClientRect().top / 40)));
-          return rows.size;
+          // Rows = distinct vertical bands (round to 6px so sub-pixel
+          // offsets can't fabricate extra rows).
+          const btns = Array.from(document.querySelectorAll('.title-toolbar button'))
+            .filter(b => getComputedStyle(b).display !== 'none');
+          return new Set(btns.map(b => Math.round(b.getBoundingClientRect().top / 6))).size;
+        })(),
+        labelOverflows: (() => {
+          // Every button label must stay inside its button frame (the
+          // reported "Chinese text spills out of the buttons" bug).
+          const btns = Array.from(document.querySelectorAll('.title-toolbar .mode-buttons .big-btn'));
+          return btns.filter(b => {
+            const r = b.getBoundingClientRect();
+            const span = b.querySelector('span:not(.btn-emoji):not(.wb-badge)');
+            if (!span) return false;
+            const lr = span.getBoundingClientRect();
+            return lr.right > r.right + 1 || lr.left < r.left - 1;
+          }).length;
         })()
       };
     });
@@ -71,9 +85,10 @@ function check(name, ok, detail) {
     check(`[${c.name}] no horizontal overflow`, !geo.hScroll, geo.hScroll ? 'scrollWidth > viewport' : '');
     check(`[${c.name}] start button above toolbar`,
       geo.start && geo.toolbar && geo.start.bottom <= geo.toolbar.top + 1);
-    check(`[${c.name}] toolbar holds 7 secondary buttons`,
-      geo.toolbarBtns === 7, 'buttons=' + geo.toolbarBtns);
+    check(`[${c.name}] toolbar holds 9 secondary buttons (3 auth + 6 modes)`,
+      geo.toolbarBtns === 9, 'buttons=' + geo.toolbarBtns);
     check(`[${c.name}] toolbar packs into <=3 rows`, geo.toolbarRows <= 3, 'rows=' + geo.toolbarRows);
+    check(`[${c.name}] no label overflows its button`, geo.labelOverflows === 0, 'overflows=' + geo.labelOverflows);
     check(`[${c.name}] no JS errors`, errors.length === 0, errors[0] || '');
     await page.close();
   }

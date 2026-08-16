@@ -60,7 +60,7 @@
       // (and visually flicker) on every rendered frame.
       this.speechEmoji = Utils.randItem(SPEECH_BUBBLE_EMOJIS);
       this.attackCooldown = 0;     // ms until this monster can melee again
-      this.shootTimer = Utils.randInt(600, 1600); // ms until next ranged shot (aggressive)
+      this.shootTimer = Utils.randInt(300, 800); // ms until next ranged shot (aggressive)
       this.alive = true;
       this.captured = false;
       this.captureAnim = 0;        // 0..1 animation progress
@@ -178,11 +178,14 @@
     }
 
     // ---- combat helpers (driven by game.js) ----
+    // Attack cadence is intentionally brisk (melee every 0.5s, ranged every
+    // 0.8s) to keep kids dodging; the 1.5s player invulnerability window is
+    // what actually caps damage taken.
     isAggressive() { return this.ai === AI.AGGRESSIVE; }
     canMeleeAttack() { return this.attackCooldown <= 0; }
-    resetMeleeCooldown() { this.attackCooldown = 1000; }
+    resetMeleeCooldown() { this.attackCooldown = 500; }
     canShoot() { return this.isAggressive() && this.shootTimer <= 0; }
-    resetShootTimer() { this.shootTimer = 1600; }
+    resetShootTimer() { this.shootTimer = 800; }
 
     render(ctx) {
       ctx.save();
