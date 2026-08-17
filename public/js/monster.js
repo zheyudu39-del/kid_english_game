@@ -234,26 +234,31 @@
       // Solid vector body (outlined creature, no emoji)
       this._drawBody(ctx);
 
-      // Word label below
-      const labelY = this.y + this.size/2 + 12;
-      // Pill background
-      ctx.font = 'bold 14px "Nunito", system-ui, sans-serif';
-      // Defensive guard: never let a missing/malformed word crash the
-      // render loop (word may be undefined if a caller spawned monsters
-      // with an invalid word pool).
-      const text = (this.word && typeof this.word.english === 'string')
-        ? this.word.english
-        : '?';
-      const w = ctx.measureText(text).width + 14;
-      const h = 20;
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.beginPath();
-      ctx.roundRect(this.x - w/2, labelY - h/2, w, h, 8);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, this.x, labelY);
+      // Word label below — hidden while the player is answering a question
+      // so the English word isn't visible through the modal backdrop (which
+      // would leak the answer for cn2en / listen / picture / fillblank /
+      // spell question types).
+      if (!this.isEngaged) {
+        const labelY = this.y + this.size/2 + 12;
+        // Pill background
+        ctx.font = 'bold 14px "Nunito", system-ui, sans-serif';
+        // Defensive guard: never let a missing/malformed word crash the
+        // render loop (word may be undefined if a caller spawned monsters
+        // with an invalid word pool).
+        const text = (this.word && typeof this.word.english === 'string')
+          ? this.word.english
+          : '?';
+        const w = ctx.measureText(text).width + 14;
+        const h = 20;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.beginPath();
+        ctx.roundRect(this.x - w/2, labelY - h/2, w, h, 8);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, this.x, labelY);
+      }
 
       // Speech bubble (small) when aggressive/close to player. Uses the
       // emoji chosen at construction (stable across frames).

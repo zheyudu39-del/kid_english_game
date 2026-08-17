@@ -120,6 +120,26 @@
         : Math.max(0, localMax - 1);
       cards.appendChild(makeCard('🏅', cleared, '通关关卡'));
       cards.appendChild(makeCard('✨', wb.mastered, '掌握的错词'));
+      // SRS stats (if available from logged-in session)
+      const reg = window.RegisterModule;
+      if (reg && typeof reg.getNickname === 'function' && reg.getNickname()) {
+        // Load SRS stats asynchronously
+        if (window.API && typeof API.srsStats === 'function') {
+          API.srsStats().then(srsData => {
+            if (srsData && srsData.stats) {
+              const srs = srsData.stats;
+              const srsCard = cards.querySelector('.rp-card--srs');
+              if (srsCard) {
+                srsCard.querySelector('.rp-card__num').textContent = '📚 ' + (srs.total || 0);
+              } else {
+                const card = makeCard('📚', srs.total || 0, 'SRS单词库');
+                card.classList.add('rp-card--srs');
+                cards.appendChild(card);
+              }
+            }
+          }).catch(() => {});
+        }
+      }
     }
 
     // Accuracy trend over recent sessions.

@@ -68,6 +68,9 @@
       // Review-level word pool (wrong-word book); null on normal levels.
       this._reviewWords = null;
 
+      // SRS tracking: accumulate word results during the level for batch upload
+      this._srsWords = {};  // { wordId: { english, chinese, difficulty, correct, wrong } }
+
       // Multiplayer (versus race) state. In net mode the server owns the
       // spawns / engagement locks / answer verdicts / match end; this loop
       // only simulates the local view and relays events.
@@ -459,6 +462,10 @@
     // out). All pending timers are tracked so a level restart can cancel
     // them and endLevel() can clear any remaining ones.
     _scheduleEndLevel(won, delay) {
+      // Cancel any previously scheduled end to avoid timer pile-up when
+      // multiple end conditions fire in quick succession (e.g. boss win
+      // followed by a lingering fireball hitting the player).
+      this._cancelPendingEnds();
       const id = setTimeout(() => {
         this._pendingEndTimers = this._pendingEndTimers.filter(t => t !== id);
         this.endLevel(won);
@@ -608,6 +615,34 @@
           Utils.toast('📕 错词本里有 ' + due + ' 个单词待复习！');
         }
       }
+
+      // Upload SRS batch to the server (best-effort, fire-and-forget).
+      this._uploadSRS();
+    }
+
+    // Send this level's accumulated word results to the server SRS store.
+    // Only logged-in players have an SRS account; guests skip silently.
+    _uploadSRS() {
+      const keys = Object.keys(this._srsWords);
+      if (!keys.length || this.netMode) { this._srsWords = {}; return; }
+      const reg = window.RegisterModule;
+      const logged = reg && typeof reg.getNickname === 'function' ? (reg.getNickname() || '') : '';
+      if (!logged) { this._srsWords = {}; return; }
+      const results = keys.map(k => {
+        const w = this._srsWords[k];
+        // Send one row per word: correct if answered correctly at least as often as wrong
+        return {
+          wordId: w.wordId,
+          english: w.english,
+          chinese: w.chinese,
+          difficulty: w.difficulty,
+          correct: w.correct >= w.wrong
+        };
+      });
+      this._srsWords = {};
+      if (window.API && typeof API.srsBatch === 'function') {
+        API.srsBatch(results).catch(e => { /* offline ok */ });
+      }
     }
 
     _calcStars() {
@@ -711,9 +746,11 @@
       });
     }
 
-    // Boss levels spawn bigger monsters (see monster.js scale/aura/crown).
+    // Boss levels spawn bigger monsters in solo mode only (solo boss = duel).
+    // In net mode the server sends regular spawns; they should not get the
+    // boss visual treatment (aura + crown) just because the level is a boss.
     _monsterScale() {
-      return (this.currentLevel && this.currentLevel.isBoss) ? 1.5 : 1;
+      return (this.currentLevel && this.currentLevel.isBoss && !this.netMode) ? 1.5 : 1;
     }
 
     // Build a Monster from a server spawn entry, clamped into our world
@@ -1066,16 +1103,21 @@
       const age = Number(this.ageGroup) || 7;
       const spellable = /^[a-z]{3,9}$/.test(String((word && word.english) || '').trim().toLowerCase());
       const tts = !!(window.TTS && TTS.isSupported());
+      const hasEmoji = !!(word && word.emoji && word.emoji !== '📚');
       const bag = ['en2cn', 'en2cn'];
       if (isReview) {
         bag.push('cn2en');
-        if (tts) bag.push('listen');
+        if (tts) { bag.push('listen'); bag.push('listen2cn'); }
         if (spellable) bag.push('spell');
+        if (hasEmoji) bag.push('picture');
+        bag.push('fillblank');
       } else {
         if (lvl <= 9) return 'en2cn'; // onboarding band
         if (age >= 5 || lvl >= 40) bag.push('cn2en');
-        if ((age >= 7 || lvl >= 90) && tts) bag.push('listen');
+        if ((age >= 7 || lvl >= 90) && tts) { bag.push('listen'); bag.push('listen2cn'); }
         if ((age >= 9 || lvl >= 160) && spellable) bag.push('spell');
+        if ((age >= 12 || lvl >= 250) && hasEmoji) bag.push('picture');
+        if (age >= 7 || lvl >= 100) bag.push('fillblank');
       }
       return Utils.randItem(bag);
     }
@@ -1084,11 +1126,30 @@
     // repetition). MP verdicts belong to the server, so net mode is
     // excluded to keep local and authoritative state from drifting.
     _recordWordResult(word, correct) {
-      if (this.netMode || !window.WrongBook) return;
-      try {
-        if (correct) WrongBook.recordRight(word);
-        else WrongBook.recordWrong(word);
-      } catch (e) { /* the book must never break gameplay */ }
+      if (this.netMode) return;
+      // WrongBook (client-side immediate review)
+      if (window.WrongBook) {
+        try {
+          if (correct) WrongBook.recordRight(word);
+          else WrongBook.recordWrong(word);
+        } catch (e) { /* the book must never break gameplay */ }
+      }
+      // SRS batch (server-side long-term spaced repetition)
+      if (word && word.english) {
+        const key = (word.id || word.english.trim().toLowerCase());
+        if (!this._srsWords[key]) {
+          this._srsWords[key] = {
+            wordId: word.id || word.english.trim().toLowerCase(),
+            english: word.english,
+            chinese: word.chinese || '',
+            difficulty: word.difficulty || 1,
+            correct: 0,
+            wrong: 0
+          };
+        }
+        if (correct) this._srsWords[key].correct++;
+        else this._srsWords[key].wrong++;
+      }
     }
 
     // Pop the vocabulary question for a monster hit by a bullet. Correct =
@@ -1204,7 +1265,10 @@
 
       if (this.hp <= 0 && !this.netMode) {
         // If the target was already reached, a pending win timer may still
-        // fire — don't downgrade a win to a loss.
+        // fire — don't downgrade a win to a loss. Pause immediately so the
+        // player can't trigger another question / boss translation after
+        // death (which would schedule a competing endLevel timer).
+        this.paused = true;
         this._scheduleEndLevel(this.captured >= this.currentLevel.target, 600);
       }
       if (this.hp <= 0 && this.netMode && !this._mpKnockedOut) {

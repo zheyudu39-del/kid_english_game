@@ -236,6 +236,29 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId })
       });
+    },
+
+    // ---- SRS (Spaced Repetition System) ----
+    srsBatch(results) {
+      const caller = this._currentPlayer();
+      if (!caller) return Promise.reject(new Error('未登录'));
+      return request('/api/players/' + encodeURIComponent(caller) + '/srs/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ results })
+      });
+    },
+
+    srsDue(limit = 20) {
+      const caller = this._currentPlayer();
+      if (!caller) return Promise.reject(new Error('未登录'));
+      return request('/api/players/' + encodeURIComponent(caller) + '/srs/due?limit=' + limit);
+    },
+
+    srsStats() {
+      const caller = this._currentPlayer();
+      if (!caller) return Promise.reject(new Error('未登录'));
+      return request('/api/players/' + encodeURIComponent(caller) + '/srs/stats');
     }
   };
 

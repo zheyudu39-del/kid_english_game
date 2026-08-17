@@ -4,10 +4,13 @@
 // { correct, choice, correctAnswer, type }.
 //
 // Question types (opts.type, default 'en2cn'):
-//   en2cn   — see the English word, pick its Chinese meaning (classic)
-//   cn2en   — see the Chinese meaning, pick the English word
-//   listen  — hear the word via TTS (no text shown), pick the English word
-//   spell   — see Chinese + the word with one letter blanked, pick the letter
+//   en2cn     — see the English word, pick its Chinese meaning (classic)
+//   cn2en     — see the Chinese meaning, pick the English word
+//   listen    — hear the word via TTS (no text shown), pick the English word
+//   listen2cn — hear the word via TTS, pick the Chinese meaning
+//   picture   — see the emoji, pick the English word
+//   fillblank — see a sentence with the word blanked, pick the word
+//   spell     — see Chinese + the word with one letter blanked, pick the letter
 (function () {
   'use strict';
 
@@ -21,6 +24,9 @@
     en2cn: '选出正确的中文意思',
     cn2en: '选出正确的英文单词',
     listen: '听一听，选出你听到的单词',
+    listen2cn: '听一听，选出正确的中文意思',
+    picture: '看一看，选出对应的英文单词',
+    fillblank: '选词填空，使句子完整',
     spell: '补全缺失的字母'
   };
 
@@ -34,6 +40,103 @@
 
   function isRealEnglish(s) {
     return typeof s === 'string' && /^[a-zA-Z][a-zA-Z -]*$/.test(s.trim()) && s.trim().length > 0;
+  }
+
+  // ---- sentence template system for fillblank questions ----
+  // Category-aware templates that produce grammatically correct example sentences
+  // by inserting the target word. Falls back to generic templates.
+  const SENTENCE_TEMPLATES = {
+    animals: [
+      'The {word} is very cute.', 'I saw a {word} at the zoo.',
+      'The {word} runs fast.', 'A {word} lives in the forest.',
+      'My favorite animal is the {word}.', 'Look! A {word} is sleeping.'
+    ],
+    food: [
+      'I like to eat {word}.', '{Word} is delicious.',
+      'Mom bought some {word} today.', 'Can I have some {word}?',
+      'The {word} tastes sweet.', 'Let\'s have {word} for lunch.'
+    ],
+    actions: [
+      'I can {word} very well.', 'Let\'s {word} together!',
+      'He likes to {word} every day.', 'She is {word}ing now.',
+      'Don\'t forget to {word}.', 'I want to {word} outside.'
+    ],
+    colors: [
+      'The sky is {word}.', 'I like the {word} one.',
+      'She wears a {word} dress.', 'The {word} car is mine.',
+      'This flower is {word}.', 'Please give me the {word} pen.'
+    ],
+    body: [
+      'I have two {word}s.', 'My {word} hurts.',
+      'She has blue {word}s.', 'He raised his {word}.',
+      'Wash your {word}s please.', 'The boy has big {word}s.'
+    ],
+    family: [
+      'My {word} is very kind.', 'I love my {word}.',
+      'His {word} works at a hospital.', 'Her {word} cooks delicious food.',
+      'The {word} is reading a book.', 'Your {word} called you.'
+    ],
+    clothes: [
+      'She wears a {word} today.', 'I need a new {word}.',
+      'The {word} is too small.', 'He bought a blue {word}.',
+      'Put on your {word}.', 'This {word} looks nice on you.'
+    ],
+    nature: [
+      'The {word} is beautiful.', 'I love the {word} in spring.',
+      'A {word} grows in the garden.', 'The {word} shines brightly.',
+      'Look at the {word} over there.', 'There is a {word} near the river.'
+    ],
+    school: [
+      'I have a {word} in my bag.', 'The {word} is on the desk.',
+      'The teacher gave me a {word}.', 'I need to study {word} today.',
+      'My {word} is very interesting.', 'Can I borrow your {word}?'
+    ],
+    transport: [
+      'The {word} is very fast.', 'I go to school by {word}.',
+      'The {word} is coming.', 'He drives a {word}.',
+      'Wait for the {word} here.', 'The {word} stops at the station.'
+    ]
+  };
+
+  const GENERIC_TEMPLATES = [
+    'This is a {word}.', 'I know the word {word}.',
+    'Can you say {word}?', 'The {word} is important.',
+    'I see a {word}.', 'My friend says {word} a lot.',
+    'The {word} is something I like.', 'We learned about {word} today.'
+  ];
+
+  // Map vocabulary category ids to template groups
+  const CATEGORY_TEMPLATE_MAP = {
+    animals: 'animals', food: 'food', actions: 'actions',
+    colors: 'colors', body: 'body', family: 'family',
+    clothes: 'clothes', nature: 'nature', school: 'school',
+    transport: 'transport', house: 'nature', numbers: 'school',
+    abstract_a: null, abstract_b: null, abstract_c: null
+  };
+
+  // Generate a sentence for a word, using its category if available
+  function makeSentence(word) {
+    const cat = (word && word.category) || '';
+    const templateGroup = CATEGORY_TEMPLATE_MAP[cat] || null;
+    const templates = (templateGroup && SENTENCE_TEMPLATES[templateGroup])
+      ? SENTENCE_TEMPLATES[templateGroup]
+      : GENERIC_TEMPLATES;
+    const tpl = templates[Math.floor(Math.random() * templates.length)];
+    const eng = (word && typeof word.english === 'string') ? word.english.trim() : '___';
+    // Capitalize first letter when {Word} is used
+    return tpl.replace(/\{word\}/g, eng).replace(/\{Word\}/g, eng.charAt(0).toUpperCase() + eng.slice(1));
+  }
+
+  // Build fill-in-the-blank question: show a sentence with ___ where the word goes
+  function buildFillBlankOptions(word, allWords) {
+    const eng = (word && typeof word.english === 'string') ? word.english.trim().toLowerCase() : '';
+    const sentence = makeSentence(word);
+    // Use word boundaries to avoid matching "I" inside "like" or "a" inside "apple"
+    const escaped = eng.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const blanked = sentence.replace(new RegExp('\\b' + escaped + '\\b', 'gi'), '___');
+    // Build English options (same as cn2en)
+    const { options, isCorrect } = buildEnglishOptions(word, allWords);
+    return { options, isCorrect, sentence, blanked };
   }
 
   // ---- option builders per type. Each returns { options:[4 strings],
@@ -123,6 +226,7 @@
   // display text, optional sub-line, and the option builder result.
   function buildQuestion(word, allWords, type) {
     if (type === 'listen' && !(window.TTS && TTS.isSupported())) type = 'cn2en';
+    if (type === 'listen2cn' && !(window.TTS && TTS.isSupported())) type = 'en2cn';
     let q = { type, prompt: PROMPTS[type] || PROMPTS.en2cn, display: '', sub: '', replay: false };
     if (type === 'en2cn') {
       Object.assign(q, buildChineseOptions(word, allWords));
@@ -134,6 +238,27 @@
       Object.assign(q, buildEnglishOptions(word, allWords));
       q.display = '';
       q.replay = true;
+    } else if (type === 'listen2cn') {
+      Object.assign(q, buildChineseOptions(word, allWords));
+      q.display = '';
+      q.replay = true;
+    } else if (type === 'picture') {
+      Object.assign(q, buildEnglishOptions(word, allWords));
+      q.display = word.emoji || '📚';
+      q.sub = word.chinese;
+    } else if (type === 'fillblank') {
+      const fb = buildFillBlankOptions(word, allWords);
+      // If the sentence doesn't contain the word (e.g. short word), fall back to cn2en
+      if (fb.blanked.indexOf('___') === -1) {
+        q.type = 'cn2en';
+        q.prompt = PROMPTS.cn2en;
+        Object.assign(q, buildEnglishOptions(word, allWords));
+        q.display = word.chinese;
+      } else {
+        Object.assign(q, fb);
+        q.display = fb.blanked;
+        q.sub = word.chinese;
+      }
     } else if (type === 'spell') {
       Object.assign(q, buildSpellOptions(word));
       if (q.fallbackType) {
@@ -168,8 +293,23 @@
       const q = buildQuestion(word, allWords, opts && opts.type);
 
       // Display
-      monsterEl.textContent = q.type === 'listen' ? '👂' : '📚';
-      wordEl.textContent = q.display || '❓';
+      if (q.type === 'picture') {
+        monsterEl.textContent = '';
+        wordEl.textContent = q.display || '📚';
+        wordEl.style.fontSize = '64px';
+      } else if (q.type === 'fillblank') {
+        monsterEl.textContent = '✏️';
+        wordEl.textContent = q.display || '___';
+        wordEl.style.fontSize = '';
+      } else if (q.type === 'listen2cn' || q.type === 'listen') {
+        monsterEl.textContent = q.type === 'listen2cn' ? '👂' : '🔊';
+        wordEl.textContent = '❓';
+        wordEl.style.fontSize = '';
+      } else {
+        monsterEl.textContent = '📚';
+        wordEl.textContent = q.display || '❓';
+        wordEl.style.fontSize = '';
+      }
       if (subEl) {
         subEl.textContent = q.sub || '';
         subEl.classList.toggle('hidden', !q.sub);
@@ -270,5 +410,5 @@
     });
   }
 
-  window.Question = { show, buildQuestion };
+  window.Question = { show, buildQuestion, makeSentence };
 })();

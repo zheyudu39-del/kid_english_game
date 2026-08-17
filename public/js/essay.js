@@ -36,6 +36,10 @@
         if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
         if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
         if (window.TTS && TTS.isSupported()) TTS.stop();
+        // Remove event listeners so they don't accumulate across repeated
+        // boss attempts (re-shooting after a wrong translation).
+        submitBtn.removeEventListener('click', onSubmit);
+        input.removeEventListener('keydown', onKeyDown);
         modal.classList.add('hidden');
         resolve(result);
       };
@@ -46,7 +50,7 @@
         settle({ correct: false, text: '', details: [], timedOut: true });
       }, 300000); // generous: kids type slowly
 
-      const submit = () => {
+      const onSubmit = () => {
         if (settled) return;
         const text = input.value.trim();
         if (!text) {
@@ -71,6 +75,14 @@
         closeTimer = setTimeout(() => {
           settle({ correct: result.correct, text, details: result.details });
         }, result.correct ? 2600 : 4200);
+      };
+
+      const onKeyDown = (e) => {
+        // Ctrl+Enter submits; plain Enter stays available for new lines.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          onSubmit();
+        }
       };
 
       function renderFeedback(essay, result) {
@@ -113,14 +125,8 @@
         }
       }
 
-      submitBtn.addEventListener('click', submit);
-      input.addEventListener('keydown', (e) => {
-        // Ctrl+Enter submits; plain Enter stays available for new lines.
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault();
-          submit();
-        }
-      });
+      submitBtn.addEventListener('click', onSubmit);
+      input.addEventListener('keydown', onKeyDown);
 
       if (window.TTS && TTS.isSupported()) {
         // Reading the Chinese essay aloud isn't supported (English voice

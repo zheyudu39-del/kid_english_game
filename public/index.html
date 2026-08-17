@@ -209,6 +209,10 @@
                 <span class="btn-emoji" aria-hidden="true">📊</span>
                 <span>报告</span>
               </button>
+              <button id="btn-mastery" class="big-btn ms-entry-btn" type="button" aria-label="掌握度仪表盘">
+                <span class="btn-emoji" aria-hidden="true">📈</span>
+                <span>掌握度</span>
+              </button>
             </div>
           </div>
         </form>
@@ -358,6 +362,23 @@
         <div class="rp-trend" id="rp-trend"></div>
         <div class="rp-words" id="rp-words"></div>
         <div class="rp-sessions" id="rp-sessions"></div>
+      </div>
+    </div>
+
+    <!-- 掌握度仪表盘 (Word Mastery Dashboard) -->
+    <div id="screen-mastery" class="screen screen--board hidden">
+      <div class="board-panel ms-panel">
+        <div class="board-header">
+          <h2 class="board-title">📈 掌握度仪表盘</h2>
+          <button id="btn-ms-close" class="close-modal-btn" aria-label="关闭仪表盘">✕</button>
+        </div>
+        <div class="ms-section">
+          <div class="ms-cards" id="ms-cards"></div>
+        </div>
+        <div class="ms-section" id="ms-categories"></div>
+        <div class="ms-section" id="ms-heat"></div>
+        <div class="ms-section" id="ms-due-today"></div>
+        <div class="ms-section" id="ms-weakest"></div>
       </div>
     </div>
 
@@ -565,6 +586,7 @@
   <script src="js/map.js" defer></script>
   <script src="js/leaderboard.js" defer></script>
   <script src="js/report.js" defer></script>
+  <script src="js/mastery.js" defer></script>
   <script src="js/main.js" defer></script>
 </body>
 </html>

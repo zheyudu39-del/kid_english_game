@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "players": {
+    "12": {
+      "aj1398": {
+        "ease": 2.6,
+        "interval": 1,
+        "repetitions": 1,
+        "correct": 1,
+        "wrong": 0,
+        "lastSeen": "2026-08-17T09:06:51.124Z",
+        "nextReview": "2026-08-18",
+        "english": "regional",
+        "chinese": "地区",
+        "difficulty": 2
+      },
+      "ac685": {
+        "ease": 2.6,
+        "interval": 1,
+        "repetitions": 1,
+        "correct": 1,
+        "wrong": 0,
+        "lastSeen": "2026-08-17T09:06:51.124Z",
+        "nextReview": "2026-08-18",
+        "english": "pause",
+        "chinese": "暂停",
+        "difficulty": 1
+      },
+      "aj1329": {
+        "ease": 2.6,
+        "interval": 1,
+        "repetitions": 1,
+        "correct": 1,
+        "wrong": 0,
+        "lastSeen": "2026-08-17T09:06:51.124Z",
+        "nextReview": "2026-08-18",
+        "english": "pronounced",
+        "chinese": "明显",
+        "difficulty": 2
+      },
+      "aa354": {
+        "ease": 2.6,
+        "interval": 1,
+        "repetitions": 1,
+        "correct": 1,
+        "wrong": 0,
+        "lastSeen": "2026-08-17T09:06:51.124Z",
+        "nextReview": "2026-08-18",
+        "english": "reference",
+        "chinese": "参考",
+        "difficulty": 2
+      },
+      "aj1639": {
+        "ease": 2.6,
+        "interval": 1,
+        "repetitions": 1,
+        "correct": 1,
+        "wrong": 0,
+        "lastSeen": "2026-08-17T09:06:51.124Z",
+        "nextReview": "2026-08-18",
+        "english": "spherical",
+        "chinese": "球形",
+        "difficulty": 2
+      }
+    }
+  }
+}

@@ -26,6 +26,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SCORES_FILE = path.join(DATA_DIR, 'scores.json');
 const VOCAB_FILE = path.join(DATA_DIR, 'vocabulary.json');
 const PLAYERS_FILE = path.join(DATA_DIR, 'players.json');
+const SRS_FILE = path.join(DATA_DIR, 'srs.json');
 
 const VALID_AGE_GROUPS = [3, 5, 7, 9, 12, 15, 18, 'adult'];
 const VALID_GAME_MODES = ['word-recognition', 'listening', 'spelling', 'sentences', 'word-hunter'];
@@ -156,7 +157,109 @@ function isValidNickname(nickname) {
   return typeof nickname === 'string' && NICKNAME_RE.test(nickname.trim());
 }
 
-// ---------------------------------------------------------------- helpers
+function loadSRS() {
+  if (_srsCache.data) return _srsCache.data;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SRS_FILE, 'utf-8'));
+    if (parsed && typeof parsed === 'object' && parsed.players && typeof parsed.players === 'object' && !Array.isArray(parsed.players)) {
+      parsed.players = Object.assign(Object.create(null), parsed.players);
+      _srsCache.data = parsed;
+    } else {
+      _srsCache.loadFailed = true;
+      _srsCache.data = { version: '1.0', players: Object.create(null) };
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('srs.json load failed:', err.message);
+      _srsCache.loadFailed = true;
+    }
+    _srsCache.data = { version: '1.0', players: Object.create(null) };
+  }
+  return _srsCache.data;
+}
+
+function saveSRS(data) {
+  _srsCache.data = data;
+  const write = _srsCache.writeQueue.then(() => {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      if (_srsCache.loadFailed) {
+        try { fs.copyFileSync(SRS_FILE, SRS_FILE + '.corrupt-' + Date.now()); } catch (e) { /* non-fatal */ }
+      }
+      const tmp = SRS_FILE + '.tmp';
+      fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8', (err) => {
+        if (err) { reject(err); return; }
+        fs.rename(tmp, SRS_FILE, (err2) => {
+          if (err2) reject(err2);
+          else { _srsCache.loadFailed = false; resolve(); }
+        });
+      });
+    });
+  });
+  _srsCache.writeQueue = write.catch(err => {
+    console.error('saveSRS failed:', err);
+  });
+  return write;
+}
+
+// SM-2 spaced repetition algorithm.
+// Returns the updated entry (mutated in place). Default ease = 2.5 (Anki default).
+function applySM2(entry, correct) {
+  if (!entry) return entry;
+  // Ensure numeric fields
+  if (typeof entry.ease !== 'number' || !Number.isFinite(entry.ease)) entry.ease = 2.5;
+  if (typeof entry.interval !== 'number' || !Number.isFinite(entry.interval)) entry.interval = 0;
+  if (typeof entry.repetitions !== 'number' || !Number.isFinite(entry.repetitions)) entry.repetitions = 0;
+  if (typeof entry.correct !== 'number' || !Number.isFinite(entry.correct)) entry.correct = 0;
+  if (typeof entry.wrong !== 'number' || !Number.isFinite(entry.wrong)) entry.wrong = 0;
+
+  if (correct) {
+    entry.correct++;
+    if (entry.repetitions === 0) {
+      entry.interval = 1;
+    } else if (entry.repetitions === 1) {
+      entry.interval = 3;
+    } else {
+      entry.interval = Math.round(entry.interval * entry.ease);
+    }
+    entry.repetitions++;
+    entry.ease = Math.max(1.3, entry.ease + 0.1);
+  } else {
+    entry.wrong++;
+    entry.repetitions = 0;
+    entry.interval = 1;
+    entry.ease = Math.max(1.3, entry.ease - 0.2);
+  }
+  entry.lastSeen = new Date().toISOString();
+  // nextReview = today + interval days (truncate to midnight UTC for deterministic "due" calc)
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + Math.max(1, entry.interval));
+  entry.nextReview = d.toISOString().slice(0, 10);
+  return entry;
+}
+
+// SM-2 helper: count words mastered (interval >= 21 days = 3-week retention)
+function isMastered(entry) {
+  return entry && entry.interval >= 21 && entry.repetitions >= 3;
+}
+
+// SM-2 helper: count words due for review today
+function isDueToday(entry) {
+  if (!entry || !entry.nextReview) return true;
+  const today = new Date().toISOString().slice(0, 10);
+  return entry.nextReview <= today;
+}
+
+// SM-2 helper: compute mastery score 0-100
+function masteryScore(entry) {
+  if (!entry) return 0;
+  const accuracy = entry.correct + entry.wrong > 0
+    ? entry.correct / (entry.correct + entry.wrong)
+    : 0;
+  const intervalScore = Math.min(1, entry.interval / 60); // 60 days = 100% interval
+  return Math.round(50 * accuracy + 50 * intervalScore);
+}
 
 function loadScores() {
   if (_scoresCache.data) return _scoresCache.data;
@@ -212,6 +315,7 @@ function saveScores(data) {
 const _playersCache = { data: null, loading: false, loadFailed: false, writeQueue: Promise.resolve() };
 const _scoresCache = { data: null, loading: false, loadFailed: false, writeQueue: Promise.resolve() };
 const _vocabCache = { data: null };
+const _srsCache = { data: null, loading: false, loadFailed: false, writeQueue: Promise.resolve() };
 
 function loadVocabulary() {
   // Cache the parsed vocabulary: the file is ~1.7MB and reading + parsing it
@@ -847,6 +951,209 @@ app.get('/api/report/:nickname', (req, res) => {
     }))
   });
 });
+
+// ---------------------------------------------------------------- SRS (Spaced Repetition System)
+// SM-2 based spaced repetition for long-term vocabulary retention.
+// Stores per-player word-level tracking: ease, interval, repetitions, review dates.
+
+// POST /api/players/:nickname/srs/batch  ->  record a batch of word results
+// Body: { results: [ { wordId, english, chinese, difficulty, correct }, ... ] }
+// Each result updates the SM-2 entry for that word. Returns updated stats.
+app.post('/api/players/:nickname/srs/batch', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const { results } = req.body || {};
+  if (!Array.isArray(results) || results.length === 0) {
+    return res.status(400).json({ error: 'results 必须是非空数组' });
+  }
+  if (results.length > 100) {
+    return res.status(400).json({ error: '单次最多上报 100 条结果' });
+  }
+
+  const data = loadSRS();
+  let playerData = data.players[nickname];
+  if (!playerData) {
+    playerData = {};
+    data.players[nickname] = playerData;
+  }
+
+  let updated = 0;
+  // Pre-load vocabulary for category lookup during batch processing
+  let vocabWords = null;
+  try {
+    const vocab = loadVocabulary();
+    if (vocab && Array.isArray(vocab.words)) vocabWords = vocab.words;
+  } catch (e) { /* no vocab, categories will stay as 'unknown' */ }
+  for (const r of results) {
+    const wordKey = (r.wordId || (r.english || '').trim().toLowerCase()) || '';
+    if (!wordKey) continue;
+    if (typeof r.correct !== 'boolean') continue;
+
+    let entry = playerData[wordKey];
+    if (!entry) {
+      entry = {
+        ease: 2.5,
+        interval: 0,
+        repetitions: 0,
+        correct: 0,
+        wrong: 0,
+        lastSeen: null,
+        nextReview: new Date().toISOString().slice(0, 10)
+      };
+      playerData[wordKey] = entry;
+    }
+    // Store metadata for dashboard display
+    if (r.english) entry.english = r.english;
+    if (r.chinese) entry.chinese = r.chinese;
+    if (typeof r.difficulty === 'number') entry.difficulty = r.difficulty;
+    // Look up category from vocabulary
+    if (!entry.category && vocabWords) {
+      const match = vocabWords.find(w => (w.id || '').toLowerCase() === wordKey.toLowerCase() ||
+        (w.english || '').trim().toLowerCase() === wordKey.toLowerCase());
+      if (match && match.category) entry.category = match.category;
+    }
+    applySM2(entry, r.correct);
+    updated++;
+  }
+
+  if (updated === 0) return res.status(400).json({ error: '没有有效的结果记录' });
+
+  saveSRS(data).then(() => {
+    const stats = buildSRSStats(playerData);
+    res.json({ success: true, updated, stats });
+  }).catch(err => res.status(500).json({ error: '保存失败: ' + err.message }));
+});
+
+// GET /api/players/:nickname/srs/due?limit=20  ->  words due for review today
+app.get('/api/players/:nickname/srs/due', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 50) : 20;
+
+  const data = loadSRS();
+  const playerData = data.players[nickname] || {};
+
+  const due = [];
+  for (const key of Object.keys(playerData)) {
+    const entry = playerData[key];
+    if (isDueToday(entry)) {
+      due.push({
+        wordId: key,
+        english: entry.english || key,
+        chinese: entry.chinese || '',
+        difficulty: entry.difficulty || 1,
+        ease: entry.ease,
+        interval: entry.interval,
+        repetitions: entry.repetitions,
+        correct: entry.correct || 0,
+        wrong: entry.wrong || 0,
+        mastery: masteryScore(entry),
+        nextReview: entry.nextReview || ''
+      });
+    }
+  }
+  // Sort by most overdue / weakest first
+  due.sort((a, b) => {
+    const aWeak = (a.wrong || 0) - (a.correct || 0);
+    const bWeak = (b.wrong || 0) - (b.correct || 0);
+    return bWeak - aWeak || a.interval - b.interval;
+  });
+
+  res.json({ due: due.slice(0, limit), totalDue: due.length });
+});
+
+// GET /api/players/:nickname/srs/stats  ->  SRS statistics for dashboard
+app.get('/api/players/:nickname/srs/stats', (req, res) => {
+  const nickname = (req.params.nickname || '').trim();
+  if (!isValidNickname(nickname)) return res.status(400).json({ error: '昵称格式不合法' });
+  if (!isAuthorizedCaller(req, nickname)) return res.status(401).json({ error: '请先登录' });
+
+  const data = loadSRS();
+  const playerData = data.players[nickname] || {};
+  const stats = buildSRSStats(playerData);
+
+  // Category breakdown (requires vocabulary data)
+  let categories = [];
+  try {
+    const vocab = loadVocabulary();
+    const catMap = {};
+    for (const key of Object.keys(playerData)) {
+      const entry = playerData[key];
+      const cat = entry.category || 'unknown';
+      if (!catMap[cat]) catMap[cat] = { total: 0, mastered: 0, learning: 0, scoreSum: 0 };
+      catMap[cat].total++;
+      if (isMastered(entry)) catMap[cat].mastered++;
+      else if (entry.repetitions > 0) catMap[cat].learning++;
+      catMap[cat].scoreSum += masteryScore(entry);
+    }
+    categories = Object.entries(catMap).map(([cat, c]) => ({
+      category: cat,
+      total: c.total,
+      mastered: c.mastered,
+      learning: c.learning,
+      avgScore: c.total > 0 ? Math.round(c.scoreSum / c.total) : 0
+    })).sort((a, b) => b.total - a.total);
+  } catch (e) { /* no vocab data */ }
+
+  // Top 10 weakest words
+  const weakest = [];
+  for (const key of Object.keys(playerData)) {
+    const entry = playerData[key];
+    if (entry.wrong > 0) {
+      weakest.push({
+        wordId: key,
+        english: entry.english || key,
+        chinese: entry.chinese || '',
+        correct: entry.correct || 0,
+        wrong: entry.wrong || 0,
+        mastery: masteryScore(entry)
+      });
+    }
+  }
+  weakest.sort((a, b) => b.wrong - a.wrong || a.mastery - b.mastery);
+
+  res.json({
+    stats,
+    categories: categories.slice(0, 12),
+    weakest: weakest.slice(0, 10)
+  });
+});
+
+// Helper: compute aggregate SRS stats for a player's word data
+function buildSRSStats(playerData) {
+  const keys = Object.keys(playerData || {});
+  let total = keys.length;
+  let mastered = 0;
+  let learning = 0;
+  let dueToday = 0;
+  let totalCorrect = 0;
+  let totalWrong = 0;
+  for (const key of keys) {
+    const entry = playerData[key];
+    totalCorrect += entry.correct || 0;
+    totalWrong += entry.wrong || 0;
+    if (isMastered(entry)) mastered++;
+    else if (entry.repetitions > 0) learning++;
+    if (isDueToday(entry)) dueToday++;
+  }
+  return {
+    total,
+    mastered,
+    learning,
+    newWords: total - mastered - learning,
+    dueToday,
+    totalCorrect,
+    totalWrong,
+    accuracy: totalCorrect + totalWrong > 0
+      ? Math.round((totalCorrect / (totalCorrect + totalWrong)) * 100)
+      : 0
+  };
+}
 
 // GET /api/health  -> simple health check
 app.get('/api/health', (req, res) => {

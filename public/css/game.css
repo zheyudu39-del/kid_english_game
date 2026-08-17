@@ -3144,6 +3144,139 @@ html, body {
 .rp-session__acc.bad { color: var(--c-red); }
 .rp-session__dur { opacity: 0.7; }
 
+/* ================================================================
+   Mastery Dashboard (学习掌握度仪表盘)
+   ================================================================ */
+.ms-entry-btn {
+  background: linear-gradient(135deg, #4a90d9 0%, #7b68ee 100%);
+}
+
+.ms-panel { max-width: 680px; }
+
+.ms-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ms-card {
+  background: var(--c-bg-card);
+  border-radius: 10px;
+  padding: 12px 10px;
+  text-align: center;
+  border-left: 3px solid var(--c-blue);
+  transition: transform 0.15s;
+}
+.ms-card:hover { transform: translateY(-2px); }
+
+.ms-card__num {
+  font-family: var(--font-game);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+.ms-card__label {
+  font-size: 12px;
+  color: var(--c-text-soft);
+  margin-top: 4px;
+}
+
+.ms-section {
+  margin-bottom: 16px;
+}
+
+.ms-section__head {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.ms-bar {
+  margin-bottom: 8px;
+}
+.ms-bar__head {
+  font-size: 12px;
+  color: var(--c-text-soft);
+  margin-bottom: 3px;
+}
+.ms-bar__track {
+  height: 8px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ms-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--c-blue);
+  transition: width 0.5s ease;
+  min-width: 2px;
+}
+
+.ms-heatmap {
+  width: 100%;
+  max-width: 320px;
+  display: block;
+  margin: 0 auto;
+}
+.ms-heatmap__label {
+  font-size: 10px;
+  fill: var(--c-text-soft);
+}
+
+.ms-word-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ms-word-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--c-bg-card);
+  border-radius: 8px;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.ms-word-row:hover { background: rgba(255,255,255,0.08); }
+
+.ms-word-row__en {
+  font-weight: 700;
+  color: var(--c-text);
+}
+.ms-word-row__cn {
+  color: var(--c-text-soft);
+}
+.ms-word-row__score {
+  font-family: var(--font-game);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.ms-word-row__score--good { background: rgba(39,174,96,0.2); color: var(--c-green); }
+.ms-word-row__score--mid { background: rgba(243,156,18,0.2); color: var(--c-orange); }
+.ms-word-row__score--bad { background: rgba(231,76,60,0.2); color: var(--c-red); }
+.ms-word-row__wrong {
+  font-size: 11px;
+  color: var(--c-red);
+  opacity: 0.8;
+}
+
+.ms-empty {
+  color: var(--c-text-soft);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+  opacity: 0.7;
+}
+
 @media (max-width: 480px) {
   .rp-cards { grid-template-columns: repeat(2, 1fr); }
   .rp-session { grid-template-columns: auto 1fr auto auto; }
@@ -3152,4 +3285,8 @@ html, body {
   .wb-row__cn { grid-column: 1; }
   .wb-row__status { grid-column: 2; grid-row: 1; }
   .wb-row__wrong { display: none; }
+  .ms-cards { grid-template-columns: repeat(2, 1fr); }
+  .ms-word-row { grid-template-columns: 1fr auto; }
+  .ms-word-row__cn { display: none; }
+  .ms-word-row__wrong { display: none; }
 }
