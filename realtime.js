@@ -14,10 +14,10 @@
  *
  * Message protocol (JSON, one object per frame):
  *   C→S: create{level} quick{level} join{code} leave start
- *        pos{x,y,f} hit{monsterId} answer{monsterId, choice}
+ *        pos{x,y,f} ko{} hit{monsterId} answer{monsterId, choice}
  *   S→C: room{code,players,level,state} peer_join{name} peer_leave{id}
  *        countdown{n} start{level,cfg,spawns,target,timeLimit}
- *        peer_pos{id,x,y,f} engage{monsterId,by} capture{monsterId,by}
+ *        peer_pos{id,x,y,f} peer_ko{id} engage{monsterId,by} capture{monsterId,by}
  *        wrong{monsterId,by,correct} spawn{spawns[]} end{winner,standings}
  *        error{msg}
  */
@@ -199,6 +199,7 @@ function attachRealtime(httpServer, deps) {
       players: new Map(),
       monsters: new Map(),
       counts: new Map(),
+      kos: new Set(),           // players knocked out (HP 0) – all KO → end early
       wordPool: eligibleWords(cfg),
       nextNetId: 0,
       lastActivity: Date.now(),
@@ -252,6 +253,7 @@ function attachRealtime(httpServer, deps) {
     room.monsters.clear();
     room.state = 'playing';
     room.counts = new Map();
+    room.kos = new Set();
     for (const id of room.players.keys()) room.counts.set(id, 0);
     // Fresh word pool per round so replays don't repeat the exact same set.
     room.wordPool = eligibleWords(room.cfg);
@@ -307,6 +309,7 @@ function attachRealtime(httpServer, deps) {
     }
     room.players.delete(conn.id);
     room.counts.delete(conn.id);
+    room.kos.delete(conn.id);
     conn.room = null;
     room.lastActivity = Date.now();
     if (room.players.size === 0) {
@@ -506,6 +509,19 @@ function attachRealtime(httpServer, deps) {
         const f = (msg.f && Number.isFinite(Number(msg.f.x)) && Number.isFinite(Number(msg.f.y)))
           ? { x: msg.f.x, y: msg.f.y } : { x: 0, y: 1 };
         broadcast(room, 'peer_pos', { id: conn.id, x: cx, y: cy, f }, conn.id);
+        return;
+      }
+      case 'ko': {
+        // Player knocked out (HP 0). If every remaining player is KO'd the
+        // match ends early instead of waiting for the timer.
+        if (!room || room.state !== 'playing') return;
+        room.kos.add(conn.id);
+        broadcast(room, 'peer_ko', { id: conn.id });
+        let allKo = true;
+        for (const pid of room.players.keys()) {
+          if (!room.kos.has(pid)) { allKo = false; break; }
+        }
+        if (allKo) endGame(room, null);
         return;
       }
       case 'hit': {

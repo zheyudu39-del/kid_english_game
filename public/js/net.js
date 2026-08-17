@@ -177,7 +177,8 @@
     leaveRoom() { return send('leave', {}); },
     startGame() { return send('start', {}); },
     reportHit(monsterId) { return send('hit', { monsterId }); },
-    reportAnswer(monsterId, choice) { return send('answer', { monsterId, choice }); }
+    reportAnswer(monsterId, choice) { return send('answer', { monsterId, choice }); },
+    sendKo() { return send('ko', {}); }
   };
 
   window.Net = Net;

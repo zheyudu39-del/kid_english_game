@@ -675,6 +675,17 @@
         this._updateHUD();
       });
 
+      Net.on('peer_ko', (msg) => {
+        if (!this.netMode) return;
+        // A remote player was knocked out. Show a toast so the alive player
+        // knows they're the last one standing.
+        if (msg.id !== this.myNetId) {
+          const rp = this.remotePlayers.get(msg.id);
+          const name = (rp && rp.name) || '对手';
+          Utils.toast('⚡ ' + name + ' 被击倒了！');
+        }
+      });
+
       Net.on('wrong', (msg) => {
         if (!this.netMode) return;
         const m = this.monsters.find(x => x.netId === msg.monsterId);
@@ -1163,6 +1174,9 @@
     // Apply damage to the player (respects the invulnerability window), play
     // hit FX, and end the level when HP reaches 0. Callers handle knockback.
     _damagePlayer(amount, sx, sy) {
+      // A knocked-out hunter is out of the fight: no further damage, HP
+      // stays at 0 instead of going negative.
+      if (this._mpKnockedOut) return;
       if (this.shieldTime > 0) {
         // Shield absorbs the hit: visual ping, no damage.
         if (sx !== undefined && sy !== undefined) {
@@ -1199,6 +1213,7 @@
         // of the match (movement + firing freeze; the match goes on).
         this._mpKnockedOut = true;
         Utils.toast('你已被击倒，等待对战结束…');
+        window.Net.sendKo();
       }
     }
 
@@ -1427,14 +1442,9 @@
       // Versus: a knocked-out hunter can't move or shoot anymore.
       const knockedOut = this.netMode && this.hp <= 0;
 
-      // Input → player
+      // Input → player (pass analog vector for any-angle movement)
       const vec = knockedOut ? { x: 0, y: 0 } : this.input.getMoveVector();
-      // Temporarily stuff axis into input.state shape for Player
-      this.input.state.left  = vec.x < -0.1;
-      this.input.state.right = vec.x >  0.1;
-      this.input.state.up    = vec.y < -0.1;
-      this.input.state.down  = vec.y >  0.1;
-      this.player.update(dt, this.input.state, this.world.width, this.world.height);
+      this.player.update(dt, { vx: vec.x, vy: vec.y }, this.world.width, this.world.height);
 
       // Update world
       this.world.update(dt);

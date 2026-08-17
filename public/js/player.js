@@ -24,12 +24,20 @@
     }
 
     update(dtMs, input, worldW, worldH) {
-      // Determine target velocity from input
+      // Determine target velocity from input.
+      // Accept either a raw analog vector {vx, vy} (joystick / any-angle)
+      // or the classic boolean directions {left, right, up, down}.
       let tx = 0, ty = 0;
-      if (input.left)  tx -= 1;
-      if (input.right) tx += 1;
-      if (input.up)    ty -= 1;
-      if (input.down)  ty += 1;
+      if (input.vx !== undefined || input.vy !== undefined) {
+        // Analog: use the raw vector directly (already clamped to [-1,1]).
+        tx = typeof input.vx === 'number' ? input.vx : 0;
+        ty = typeof input.vy === 'number' ? input.vy : 0;
+      } else {
+        if (input.left)  tx -= 1;
+        if (input.right) tx += 1;
+        if (input.up)    ty -= 1;
+        if (input.down)  ty += 1;
+      }
 
       const mag = Math.hypot(tx, ty);
       if (mag > 0) {
