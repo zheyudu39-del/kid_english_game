@@ -437,6 +437,16 @@
       if (typeof profile.coins === 'number' && Number.isFinite(profile.coins)) {
         game.coins = profile.coins;
       }
+      // Shop state lives in the same profile; pull it now so a purchased
+      // weapon / consumables work immediately after a page refresh without
+      // the player having to open the shop first.
+      if (typeof profile.equippedWeapon === 'string' && profile.equippedWeapon) {
+        game.equippedWeapon = profile.equippedWeapon;
+      }
+      if (profile.inventory && typeof profile.inventory === 'object') {
+        game.inventory = profile.inventory;
+        game.items = Object.assign({}, profile.inventory.items || {});
+      }
     }
     updateLoggedInUI();
     // Let main.js re-render the title-screen progress from the freshly

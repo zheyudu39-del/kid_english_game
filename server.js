@@ -524,8 +524,8 @@ function validateScore(req, res, next) {
   if (!isValidNickname(nickname)) {
     return res.status(400).json({ error: '昵称格式不合法' });
   }
-  if (typeof score !== 'number' || score < 0 || score > 200) {
-    return res.status(400).json({ error: '分数不合法（0-200）' });
+  if (typeof score !== 'number' || score < 0 || score > 20000) {
+    return res.status(400).json({ error: '分数不合法（0-20000）' });
   }
   if (!VALID_AGE_GROUPS.includes(ageGroup)) {
     return res.status(400).json({ error: '年龄段不合法' });
@@ -611,8 +611,11 @@ setInterval(() => {
 // Every /api request is rate-limited. POSTs and /api/players* (which can
 // auto-create a profile on GET) use the stricter write budget. Login and
 // register use the tightest "auth" budget to slow password guessing.
+// Normalize the path so case differences and trailing slashes can't bypass
+// the auth budget (e.g. /LOGIN, /login/ would otherwise fall through).
 app.use('/api', (req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/login' || req.path === '/register')) {
+  const normPath = req.path.replace(/\/+$/, '').toLowerCase();
+  if (req.method === 'POST' && (normPath === '/login' || normPath === '/register')) {
     return rateLimit('auth')(req, res, next);
   }
   const isWrite = req.method === 'POST' || req.originalUrl.startsWith('/api/players');
@@ -765,7 +768,8 @@ app.post('/api/scores', validateScore, (req, res) => {
     date: new Date().toISOString(),
     roundsPlayed,
     correctCount,
-    playSec
+    playSec,
+    won: !!req.body.won
   };
 
   const data = loadScores();
@@ -838,7 +842,8 @@ app.get('/api/report/:nickname', (req, res) => {
       score: e.score,
       rounds: e.roundsPlayed || 0,
       correct: e.correctCount || 0,
-      playSec: e.playSec || 0
+      playSec: e.playSec || 0,
+      won: !!e.won
     }))
   });
 });

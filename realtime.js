@@ -75,13 +75,14 @@ function attachRealtime(httpServer, deps) {
     }
 
     const ip = req.socket.remoteAddress || 'unknown';
-    const n = (ipConns.get(ip) || 0) + 1;
-    if (n > MAX_CONNS_PER_IP) {
+    const n = ipConns.get(ip) || 0;
+    if (n >= MAX_CONNS_PER_IP) {
       socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
       socket.destroy();
       return;
     }
-    ipConns.set(ip, n);
+    // Increment is deferred to the 'connection' event so failed handshakes
+    // don't permanently consume a slot (see wss.on('connection', …) below).
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req, nickname, ip);
@@ -165,7 +166,7 @@ function attachRealtime(httpServer, deps) {
 
   function registerMonsters(room, spawns) {
     for (const s of spawns) {
-      room.monsters.set(s.id, { alive: true, engagedBy: null, word: s.word });
+      room.monsters.set(s.id, { alive: true, engagedBy: null, word: s.word, engageTimer: null });
     }
   }
 
@@ -202,7 +203,6 @@ function attachRealtime(httpServer, deps) {
       nextNetId: 0,
       lastActivity: Date.now(),
       playTimer: null,
-      engageTimer: null,
       quickTimer: null
     };
     rooms.set(code, room);
@@ -224,8 +224,10 @@ function attachRealtime(httpServer, deps) {
 
   function clearRoomTimers(room) {
     if (room.playTimer) { clearTimeout(room.playTimer); room.playTimer = null; }
-    if (room.engageTimer) { clearTimeout(room.engageTimer); room.engageTimer = null; }
     if (room.quickTimer) { clearTimeout(room.quickTimer); room.quickTimer = null; }
+    for (const m of room.monsters.values()) {
+      if (m.engageTimer) { clearTimeout(m.engageTimer); m.engageTimer = null; }
+    }
   }
 
   function destroyRoom(room) {
@@ -234,8 +236,10 @@ function attachRealtime(httpServer, deps) {
   }
 
   function releaseEngagement(room) {
-    if (room.engageTimer) { clearTimeout(room.engageTimer); room.engageTimer = null; }
-    for (const m of room.monsters.values()) m.engagedBy = null;
+    for (const m of room.monsters.values()) {
+      if (m.engageTimer) { clearTimeout(m.engageTimer); m.engageTimer = null; }
+      m.engagedBy = null;
+    }
   }
 
   function startGame(room) {
@@ -259,7 +263,10 @@ function attachRealtime(httpServer, deps) {
       cfg: room.cfg,
       spawns,
       target: room.target,
-      timeLimit: room.timeLimit
+      timeLimit: room.timeLimit,
+      players: Array.from(room.players.values()).map(p => ({
+        id: p.id, name: p.name, color: p.color
+      }))
     });
     room.playTimer = setTimeout(() => endGame(room, null), (room.timeLimit + 5) * 1000);
     room.lastActivity = Date.now();
@@ -292,13 +299,11 @@ function attachRealtime(httpServer, deps) {
     const room = conn.room;
     if (!room) return;
     // Release a question this player was in the middle of answering.
-    let engagedRelease = false;
     for (const m of room.monsters.values()) {
-      if (m.engagedBy === conn.id) { m.engagedBy = null; engagedRelease = true; }
-    }
-    if (engagedRelease && room.engageTimer) {
-      clearTimeout(room.engageTimer);
-      room.engageTimer = null;
+      if (m.engagedBy === conn.id) {
+        m.engagedBy = null;
+        if (m.engageTimer) { clearTimeout(m.engageTimer); m.engageTimer = null; }
+      }
     }
     room.players.delete(conn.id);
     room.counts.delete(conn.id);
@@ -337,13 +342,25 @@ function attachRealtime(httpServer, deps) {
     if (!alive(a) || !alive(b) || a.room || b.room) {
       // One went stale mid-pair: keep the healthy one queued for the next round.
       for (const c of [a, b]) {
-        if (alive(c) && !c.room) quickQueue.push(c);
+        if (alive(c) && !c.room) {
+          quickQueue.push(c);
+          // Re-arm the timeout so the connection doesn't hang forever.
+          if (c.quickTimer) { clearTimeout(c.quickTimer); }
+          c.quickTimer = setTimeout(() => {
+            removeFromQuick(c);
+            send(c.ws, 'error', { msg: '暂时没有找到对手，试试创建房间先单人练习吧' });
+          }, QUICK_WAIT_MS);
+        }
       }
       return;
     }
 
     const room = createRoom(a.mpLevel || 1, a);
-    if (!room) return;
+    if (!room) {
+      // createRoom already sent an error to a; notify b as well.
+      send(b.ws, 'error', { msg: '服务器房间已满，请稍后再试' });
+      return;
+    }
     joinRoom(room, a);
     joinRoom(room, b);
     // Auto-start countdown so matched players don't need to do anything.
@@ -360,6 +377,9 @@ function attachRealtime(httpServer, deps) {
 
   // ---- connection lifecycle ----------------------------------------------
   wss.on('connection', (ws, req, nickname, ip) => {
+    // Count the connection only after the upgrade succeeded (see the
+    // upgrade handler above).
+    ipConns.set(ip, (ipConns.get(ip) || 0) + 1);
     const conn = {
       id: nextConnId++,
       name: nickname,
@@ -479,9 +499,13 @@ function attachRealtime(httpServer, deps) {
         if (!room || room.state !== 'playing') return;
         const x = Number(msg.x), y = Number(msg.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        // Clamp into a reasonable range so a malicious client can't send
+        // extreme values that cause rendering glitches on other clients.
+        const cx = Math.max(-500, Math.min(room.worldW + 500, x));
+        const cy = Math.max(-500, Math.min(room.worldH + 500, y));
         const f = (msg.f && Number.isFinite(Number(msg.f.x)) && Number.isFinite(Number(msg.f.y)))
           ? { x: msg.f.x, y: msg.f.y } : { x: 0, y: 1 };
-        broadcast(room, 'peer_pos', { id: conn.id, x, y, f }, conn.id);
+        broadcast(room, 'peer_pos', { id: conn.id, x: cx, y: cy, f }, conn.id);
         return;
       }
       case 'hit': {
@@ -495,14 +519,16 @@ function attachRealtime(httpServer, deps) {
         }
         m.engagedBy = conn.id;
         broadcast(room, 'engage', { monsterId: id, by: conn.id });
-        if (room.engageTimer) clearTimeout(room.engageTimer);
-        room.engageTimer = setTimeout(() => {
+        if (m.engageTimer) clearTimeout(m.engageTimer);
+        m.engageTimer = setTimeout(() => {
           // Auto-release if the answerer never replies (disconnect / stall).
           if (m.engagedBy === conn.id) {
             m.engagedBy = null;
-            broadcast(room, 'wrong', { monsterId: id, by: conn.id, correct: m.word.chinese, timeout: true });
+            broadcast(room, 'wrong', { monsterId: id, by: conn.id, timeout: true });
+            // Only the answerer learns the correct answer (not broadcast to rivals).
+            send(conn.ws, 'wrong_correct', { monsterId: id, correct: m.word.chinese });
           }
-          room.engageTimer = null;
+          m.engageTimer = null;
         }, ENGAGE_TIMEOUT_MS);
         return;
       }
@@ -511,7 +537,7 @@ function attachRealtime(httpServer, deps) {
         const id = Number(msg.monsterId);
         const m = room.monsters.get(id);
         if (!m || !m.alive || m.engagedBy !== conn.id) return;
-        if (room.engageTimer) { clearTimeout(room.engageTimer); room.engageTimer = null; }
+        if (m.engageTimer) { clearTimeout(m.engageTimer); m.engageTimer = null; }
         m.engagedBy = null;
         const correct = typeof msg.choice === 'string' && msg.choice === m.word.chinese;
         if (correct) {
@@ -530,7 +556,8 @@ function attachRealtime(httpServer, deps) {
             broadcast(room, 'spawn', { spawns });
           }
         } else {
-          broadcast(room, 'wrong', { monsterId: id, by: conn.id, correct: m.word.chinese });
+          broadcast(room, 'wrong', { monsterId: id, by: conn.id });
+          send(conn.ws, 'wrong_correct', { monsterId: id, correct: m.word.chinese });
         }
         return;
       }
@@ -554,6 +581,12 @@ function attachRealtime(httpServer, deps) {
     for (const room of rooms.values()) {
       const idle = now - room.lastActivity;
       if (room.players.size === 0 || (room.state !== 'playing' && idle > ROOM_IDLE_MS)) {
+        // Notify remaining players and clear their room reference so they
+        // can join or create a new room without getting "你已在房间中".
+        for (const p of room.players.values()) {
+          send(p.ws, 'error', { msg: '房间因长时间未活动已关闭' });
+          p.room = null;
+        }
         destroyRoom(room);
       }
     }

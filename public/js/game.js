@@ -41,6 +41,7 @@
       // Level state
       this.currentLevel = null;       // {level, world, target, ...}
       this.currentLevelNum = 1;
+      this._levelGen = 0;            // increments on each level start; guards stale async results
       this.maxUnlocked = 1;
       this.world = null;
       this.player = null;
@@ -82,7 +83,8 @@
       this._pendingEndTimers = [];
 
       this._resize();
-      window.addEventListener('resize', () => this._resize());
+      this._resizeHandler = () => this._resize();
+      window.addEventListener('resize', this._resizeHandler);
 
       // Show joystick on mobile
       if (this.input.isMobile()) this.input.showJoystick();
@@ -98,7 +100,25 @@
       }
 
       // Game loop
-      requestAnimationFrame((t) => this._loop(t));
+      this._rafId = requestAnimationFrame((t) => this._loop(t));
+    }
+
+    // Clean up event listeners and timers. The game is a singleton in normal
+    // use, but this provides a safe teardown for tests and SPA navigation.
+    destroy() {
+      if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+      if (this._resizeHandler) {
+        window.removeEventListener('resize', this._resizeHandler);
+        this._resizeHandler = null;
+      }
+      this._cancelPendingEnds();
+      this.monsters.forEach(m => { if (m && m.cleanup) m.cleanup(); });
+      this.monsters = [];
+      this.bullets = [];
+      this.enemyProjectiles = [];
+      this.coinList = [];
+      this.remotePlayers = new Map();
+      this.player = null;
     }
 
     _resize() {
@@ -112,12 +132,11 @@
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.viewW = w;
       this.viewH = h;
-      // If a world already exists, expand it to keep filling the viewport
+      // If a world already exists, expand it to keep filling the viewport.
+      // Versus keeps the fixed 1440x720 arena (shared coordinate space);
+      // the camera centers a smaller world in a larger viewport anyway.
       if (this.world) {
-        // Versus keeps the fixed 1440x720 arena (shared coordinate space);
-        // the camera centers a smaller world in a larger viewport anyway.
         if (!this.netMode) this.world.resize(w, h);
-        this.world.resize(w, h);
         // Re-clamp player into the new bounds
         if (this.player) {
           this.player.x = Utils.clamp(this.player.x, 24, this.world.width  - 24);
@@ -206,6 +225,7 @@
 
     async startLevel(num) {
       this.currentLevelNum = num;
+      this._levelGen = (this._levelGen || 0) + 1;
       // Solo run: leave any versus state behind.
       this.netMode = false;
       this.myNetId = null;
@@ -268,6 +288,7 @@
 
       // Reset state
       this.hp = this.maxHp;
+      this.shieldTime = 0;
       this.score = 0;
       this.combo = 0;
       this.maxCombo = 0;
@@ -368,6 +389,7 @@
         isBoss: false
       };
       this.currentLevelNum = 0;
+      this._levelGen = (this._levelGen || 0) + 1;
       this.currentLevel = cfg;
       this._reviewWords = due;
 
@@ -375,6 +397,7 @@
       if (this.viewW === undefined) this._resize();
       this.world = new World(worldDef, cfg, this.viewW, this.viewH);
       this.hp = this.maxHp;
+      this.shieldTime = 0;
       this.score = 0;
       this.combo = 0;
       this.maxCombo = 0;
@@ -454,8 +477,11 @@
       // the 600ms delays mean a second call can land after the first one
       // already resolved the level. Ignore any call once the level is over
       // or hasn't started (a stale timer firing across a level restart).
+      // Also bail out if a question is still in progress (PAUSED_QUESTION)
+      // — the question's settle handler will trigger endLevel afterwards.
       if (this.state === GameState.WIN || this.state === GameState.LOSE ||
-          this.state === GameState.TITLE || this.state === GameState.LEVEL_INTRO) {
+          this.state === GameState.TITLE || this.state === GameState.LEVEL_INTRO ||
+          this.state === GameState.PAUSED_QUESTION) {
         return;
       }
 
@@ -527,47 +553,51 @@
       const playSec = Math.round(Math.min(600, Math.max(5,
         (this.currentLevel.timeLimit || 60) - this.timeRemaining)));
 
-      // Backend submissions (best-effort, after the screen is up)
-      if (!won) {
-        // Track fail count for analytics (without blocking gameplay)
+      // Backend submissions (best-effort, after the screen is up).
+      // Submit a score record for EVERY finished session (win or lose) so
+      // the parent learning report gets a complete picture — every session
+      // row, accuracy trend, play time, and play-days count.
+      // Progress (unlock + coins) is submitted separately for wins only
+      // and requires auth; score records work for guests too.
+      const gen = this._levelGen; // guard against stale async results after level restart
+      const submissionKey = `submitted_level_${this.currentLevelNum}_${this.playerName || 'guest'}`;
+      if (!sessionStorage.getItem(submissionKey)) {
+        let submitted = false;
+        // Always submit a score row so the report sees every session.
         try {
-          await API.submitProgress(this.playerName, {
-            level: this.currentLevelNum, won: false, correctCount: this.captured, totalRounds: this.captured
+          await API.submitScore({
+            nickname: this.playerName, score: this.score, ageGroup: this.ageGroup,
+            gameMode: 'word-hunter', category: 'mixed',
+            roundsPlayed: this.captured, correctCount: this.captured,
+            playSec, won
           });
+          submitted = true;
         } catch (e) { /* offline ok */ }
-      } else {
-        // Submit a win once per player per level per browser session.
-        // Only mark it submitted if at least one request succeeded, so an
-        // offline win is not silently lost and can be recorded later.
-        const submissionKey = `submitted_level_${this.currentLevelNum}_${this.playerName || 'guest'}`;
-        if (!sessionStorage.getItem(submissionKey)) {
-          let submitted = false;
+        if (won) {
           try {
             const prog = await API.submitProgress(this.playerName, {
               level: this.currentLevelNum, won: true, correctCount: this.captured, totalRounds: this.captured
             });
-            // The server returns the updated profile; refresh our coin balance
-            // (and the title/shop coin UI) so the shop is always in sync.
-            if (prog && prog.player && typeof prog.player.coins === 'number') {
-              this.coins = prog.player.coins;
-              if (window.ShopModule && typeof window.ShopModule.setCoins === 'function') {
-                window.ShopModule.setCoins(this.coins);
+            if (prog && prog.player) {
+              if (this._levelGen !== gen) return; // a new level started while we were waiting
+              // The server returns the authoritative profile; sync coins AND
+              // shop state (equipped weapon / consumable counts) so item use
+              // in one level is reflected in the next without reopening the shop.
+              if (typeof prog.player.coins === 'number') {
+                this.coins = prog.player.coins;
+                if (window.ShopModule && typeof window.ShopModule.setCoins === 'function') {
+                  window.ShopModule.setCoins(this.coins);
+                }
+              }
+              if (window.ShopModule && typeof window.ShopModule.syncToGame === 'function') {
+                window.ShopModule.syncToGame(prog.player);
               }
             }
             submitted = true;
           } catch (e) { /* offline ok */ }
-          try {
-            await API.submitScore({
-              nickname: this.playerName, score: this.score, ageGroup: this.ageGroup,
-              gameMode: 'word-hunter', category: 'mixed',
-              roundsPlayed: this.captured, correctCount: this.captured,
-              playSec
-            });
-            submitted = true;
-          } catch (e) {}
-          if (submitted) {
-            try { sessionStorage.setItem(submissionKey, 'true'); } catch (e) {}
-          }
+        }
+        if (submitted) {
+          try { sessionStorage.setItem(submissionKey, 'true'); } catch (e) {}
         }
       }
 
@@ -704,7 +734,7 @@
         this.activeMonster = null;
         return;
       }
-      this.paused = false;
+      this.paused = this._modalPause; // stay paused if a modal (login/register) is open
       this.state = GameState.PLAYING;
       m.isEngaged = false;
       window.Net.reportAnswer(m.netId, result.choice);
@@ -715,6 +745,7 @@
     async startLevelNet(startMsg, myId) {
       this.netMode = true;
       this.myNetId = myId;
+      this._levelGen = (this._levelGen || 0) + 1;
       this._mpKnockedOut = false;
       this.remotePlayers = new Map();
       this.mpCounts = new Map();
@@ -762,6 +793,7 @@
 
       // Reset run state (mirrors startLevel()).
       this.hp = this.maxHp;
+      this.shieldTime = 0;
       this.score = 0;
       this.combo = 0;
       this.maxCombo = 0;
@@ -778,9 +810,9 @@
       this.player = new Player(this.world.width / 2, this.world.groundY - 60);
       this.paused = false;
 
-      // Remote hunters from the room snapshot (mp.js keeps it current).
-      const roomInfo = (window.MPModule && window.MPModule.getRoom()) || {};
-      for (const p of (roomInfo.players || [])) {
+      // Remote hunters from the server-authoritative start message.
+      const players = startMsg.players || [];
+      for (const p of players) {
         this.mpCounts.set(p.id, 0);
         if (p.id === myId) continue;
         const rp = new Player(this.world.width / 2, this.world.groundY - 60);
@@ -792,7 +824,7 @@
       this._updateMpHud();
 
       // Monsters come from the server's spawn list — one shared field.
-      this.monsters = (startMsg.spawns || []).map(s => this._monsterFromSpawn(s));
+      this.monsters = Array.isArray(startMsg.spawns) ? startMsg.spawns.map(s => this._monsterFromSpawn(s)) : [];
 
       this._showLevelIntro();
     }
@@ -872,12 +904,26 @@
           level: this.currentLevelNum, won: iWon,
           correctCount: this.captured, totalRounds: this.captured
         }).then(prog => {
-          if (prog && prog.player && typeof prog.player.coins === 'number') {
-            this.coins = prog.player.coins;
-            if (window.ShopModule && typeof window.ShopModule.setCoins === 'function') {
-              window.ShopModule.setCoins(this.coins);
+          if (prog && prog.player) {
+            if (typeof prog.player.coins === 'number') {
+              this.coins = prog.player.coins;
+              if (window.ShopModule && typeof window.ShopModule.setCoins === 'function') {
+                window.ShopModule.setCoins(this.coins);
+              }
+            }
+            if (window.ShopModule && typeof window.ShopModule.syncToGame === 'function') {
+              window.ShopModule.syncToGame(prog.player);
             }
           }
+        }).catch(() => { /* offline ok */ });
+        // Also submit a score row so the parent report sees MP matches.
+        API.submitScore({
+          nickname: this.playerName, score: this.score, ageGroup: this.ageGroup,
+          gameMode: 'word-hunter', category: 'mixed',
+          roundsPlayed: this.captured, correctCount: this.captured,
+          playSec: Math.round(Math.min(600, Math.max(5,
+            (this.currentLevel.timeLimit || 60) - this.timeRemaining))),
+          won: iWon
         }).catch(() => { /* offline ok */ });
       }
     }
@@ -1125,7 +1171,7 @@
         }
         return;
       }
-      if (!this.player.takeHit()) return;   // invulnerable
+      if (!this.player || !this.player.takeHit()) return;   // invulnerable
       this.hp -= amount;
       Utils.playBeep('hit');
       const hpEl = document.getElementById('hud-hp');
@@ -1344,12 +1390,33 @@
       this.lastTime = now;
       this._update(dt);
       this._render();
-      requestAnimationFrame((t) => this._loop(t));
+      this._rafId = requestAnimationFrame((t) => this._loop(t));
     }
 
     _update(dt) {
       // Always update FX
       this.fx.update(dt);
+
+      // Interpolate remote hunters toward their last reported position.
+      // Runs even when the local player is paused (answering a question),
+      // so the other player's movement stays smooth on our screen.
+      for (const rp of this.remotePlayers.values()) {
+        const p = rp.player;
+        const dx = rp.tx - p.x;
+        const dy = rp.ty - p.y;
+        p.isMoving = Math.hypot(dx, dy) > 4;
+        const k = Math.min(1, dt / 100);
+        p.x += dx * k;
+        p.y += dy * k;
+        if (rp.facing) p.facing = rp.facing;
+        if (p.isMoving) {
+          p.walkTimer += dt;
+          if (p.walkTimer > 200) {
+            p.walkTimer = 0;
+            p.emojiIndex = (p.emojiIndex + 1) % 2;
+          }
+        }
+      }
 
       if (this.state !== GameState.PLAYING) return;
       if (this.paused) return;
@@ -1375,25 +1442,6 @@
       // Broadcast our position to the room (~20Hz, throttled by net.js).
       if (this.netMode && !knockedOut) {
         window.Net.sendPos(this.player.x, this.player.y, this.player.facing);
-      }
-
-      // Interpolate remote hunters toward their last reported position.
-      for (const rp of this.remotePlayers.values()) {
-        const p = rp.player;
-        const dx = rp.tx - p.x;
-        const dy = rp.ty - p.y;
-        p.isMoving = Math.hypot(dx, dy) > 4;
-        const k = Math.min(1, dt / 100);
-        p.x += dx * k;
-        p.y += dy * k;
-        if (rp.facing) p.facing = rp.facing;
-        if (p.isMoving) {
-          p.walkTimer += dt;
-          if (p.walkTimer > 200) {
-            p.walkTimer = 0;
-            p.emojiIndex = (p.emojiIndex + 1) % 2;
-          }
-        }
       }
 
       // Player shooting: hold to auto-fire, rate-limited by fireCooldown.
@@ -1445,7 +1493,7 @@
       this.coinList = this.coinList.filter(c => !c.isExpired() && !c.collected);
 
       // Collisions
-      this._tryCollide();
+      this._tryCollide().catch(e => console.warn('_tryCollide error:', e));
 
       // Respawn if too few (keep some pressure). Guard against an empty
       // word pool — spawnMonsters() with no words creates monsters with

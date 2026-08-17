@@ -107,47 +107,85 @@
       const base = joystick.querySelector('.joystick-base');
       const knob = document.getElementById('joystick-knob');
       this._joystick = { el: joystick, base, knob };
-      let baseRect = null;
-      let knobRadius = 28;
+      const knobRadius = 28;
       const maxDist = 38;
+      let activeTouchId = null;   // track OUR touch by identifier
 
       const start = (e) => {
         // While a modal is open, ignore joystick presses entirely.
         if (this._locked) return;
+        // Already tracking a touch — ignore additional fingers on the joystick.
+        if (activeTouchId !== null) return;
         e.preventDefault();
+        const t = e.changedTouches ? e.changedTouches[0] : e;
+        activeTouchId = t.identifier || 'mouse';
         this._touchActive = true;
-        baseRect = base.getBoundingClientRect();
         knob.classList.add('active');
+        // Apply the initial position immediately so the player starts
+        // moving without waiting for the next touchmove event.
+        applyTouch(t);
       };
-      const move = (e) => {
-        if (!this._touchActive || !baseRect || this._locked) return;
-        e.preventDefault();
-        const t = e.touches ? e.touches[0] : e;
-        const cx = baseRect.left + baseRect.width / 2;
-        const cy = baseRect.top + baseRect.height / 2;
+
+      const findTouch = (e) => {
+        if (activeTouchId === 'mouse') return e;
+        for (let i = 0; i < e.touches.length; i++) {
+          if (e.touches[i].identifier === activeTouchId) return e.touches[i];
+        }
+        // Also check changedTouches (for touchend, our touch is gone from touches)
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === activeTouchId) return e.changedTouches[i];
+        }
+        return null;
+      };
+
+      const applyTouch = (t) => {
+        // Recompute baseRect every time so the centre is always correct
+        // (e.g. after mobile address bar shows/hides and shifts the viewport).
+        const rect = base.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
         let dx = t.clientX - cx;
         let dy = t.clientY - cy;
         const d = Math.hypot(dx, dy);
         if (d > maxDist) { dx = dx * maxDist / d; dy = dy * maxDist / d; }
-        knob.style.left = (baseRect.width / 2 + dx - knobRadius) + 'px';
-        knob.style.top  = (baseRect.height / 2 + dy - knobRadius) + 'px';
-        // Normalized vector
+        knob.style.left = (rect.width / 2 + dx - knobRadius) + 'px';
+        knob.style.top  = (rect.height / 2 + dy - knobRadius) + 'px';
         this._touchVec.x = dx / maxDist;
         this._touchVec.y = dy / maxDist;
       };
+
+      const move = (e) => {
+        if (!this._touchActive || this._locked) return;
+        const t = findTouch(e);
+        if (!t) return;
+        e.preventDefault();
+        applyTouch(t);
+      };
+
       const end = (e) => {
-        // preventDefault is only needed for touch events (it suppresses the
-        // synthetic mouse events and iOS double-tap zoom). On a real window
-        // mouseup it does nothing useful and would break native gestures
-        // elsewhere on the page (text selection, focus changes).
+        // Only reset when OUR touch ends (not some other finger).
+        if (activeTouchId === null) return;
+        let ourTouchEnded = false;
+        if (e.changedTouches) {
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === activeTouchId) {
+              ourTouchEnded = true;
+              break;
+            }
+          }
+        } else {
+          // Mouse event — always reset.
+          ourTouchEnded = true;
+        }
+        if (!ourTouchEnded) return;
         if (e && e.type !== 'mouseup') e.preventDefault();
+        activeTouchId = null;
         this._touchActive = false;
         this._touchVec.x = 0;
         this._touchVec.y = 0;
-        if (baseRect) {
-          knob.style.left = (baseRect.width / 2 - knobRadius) + 'px';
-          knob.style.top  = (baseRect.height / 2 - knobRadius) + 'px';
-        }
+        const rect = base.getBoundingClientRect();
+        knob.style.left = (rect.width / 2 - knobRadius) + 'px';
+        knob.style.top  = (rect.height / 2 - knobRadius) + 'px';
         knob.classList.remove('active');
       };
 
@@ -156,10 +194,12 @@
       joystick.addEventListener('touchmove', move, { passive: false });
       joystick.addEventListener('touchend', end);
       joystick.addEventListener('touchcancel', end);
-      // Mouse fallback (for desktop testing)
-      joystick.addEventListener('mousedown', start);
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', end);
+      // Mouse fallback (desktop only — on mobile we rely on touch events)
+      if (!this._isMobile) {
+        joystick.addEventListener('mousedown', start);
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', end);
+      }
     }
 
     _setupFireButton() {

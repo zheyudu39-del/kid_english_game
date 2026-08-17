@@ -189,6 +189,9 @@
           const d = document.createElement('span');
           d.className = 'rp-session__date';
           d.textContent = fmtDate(s.date);
+          const result = document.createElement('span');
+          result.className = 'rp-session__result';
+          result.textContent = s.won ? '🏆 通关' : '💀 未过';
           const q = document.createElement('span');
           q.className = 'rp-session__q';
           q.textContent = '答题 ' + s.correct + '/' + s.rounds;
@@ -198,7 +201,7 @@
           const dur = document.createElement('span');
           dur.className = 'rp-session__dur';
           dur.textContent = fmtDuration(s.playSec || 0);
-          row.append(d, q, a, dur);
+          row.append(d, result, q, a, dur);
           sessionsEl.appendChild(row);
         });
       }

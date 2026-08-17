@@ -2,7 +2,8 @@
 (function () {
   'use strict';
 
-  const SPEED = 3.2;        // base movement speed (units per frame)
+  const SPEED = 3.2;        // base movement speed (units per 60fps frame)
+  const REFERENCE_DT = 1000 / 60; // 16.667ms — the frame time SPEED was calibrated for
   const SIZE = 48;          // visual size
   const HITBOX = 36;        // collision size
 
@@ -43,9 +44,11 @@
       this.vx = tx * SPEED;
       this.vy = ty * SPEED;
 
-      // Apply with collision clamping
-      this.x = Utils.clamp(this.x + this.vx, SIZE/2, worldW - SIZE/2);
-      this.y = Utils.clamp(this.y + this.vy, SIZE/2, worldH - SIZE/2);
+      // Scale movement by dt so speed is consistent across frame rates
+      // (the dt is clamped in game.js, but variable-fps devices still drift).
+      const scale = Math.max(0, Math.min(3, dtMs / REFERENCE_DT));
+      this.x = Utils.clamp(this.x + this.vx * scale, SIZE/2, worldW - SIZE/2);
+      this.y = Utils.clamp(this.y + this.vy * scale, SIZE/2, worldH - SIZE/2);
 
       // Walk animation: cycle emoji every 200ms when moving. animPhase is a
       // continuous stride oscillator (~2.5 steps/sec) so the boots and rifle

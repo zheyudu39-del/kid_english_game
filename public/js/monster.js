@@ -185,7 +185,7 @@
     isAggressive() { return this.ai === AI.AGGRESSIVE; }
     canMeleeAttack() { return this.attackCooldown <= 0; }
     resetMeleeCooldown(ms) { this.attackCooldown = ms || 500; }
-    canShoot() { return this.isAggressive() && this.shootTimer <= 0; }
+    canShoot() { return this.isAggressive() && this.stunned <= 0 && this.shootTimer <= 0; }
     resetShootTimer() { this.shootTimer = 800; }
 
     render(ctx) {
