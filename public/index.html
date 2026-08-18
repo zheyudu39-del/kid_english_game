@@ -183,6 +183,15 @@
                 <span>退出</span>
               </button>
             </div>
+            <div class="bg-picker" id="bg-picker" role="radiogroup" aria-label="选择背景主题">
+              <span class="bg-picker__label">🎨 背景</span>
+              <button class="bg-picker__btn bg-picker__btn--default bg-picker__btn--active" data-bg="default" type="button" aria-label="默认背景" title="默认"></button>
+              <button class="bg-picker__btn bg-picker__btn--forest" data-bg="forest" type="button" aria-label="森林" title="森林"></button>
+              <button class="bg-picker__btn bg-picker__btn--ocean" data-bg="ocean" type="button" aria-label="海洋" title="海洋"></button>
+              <button class="bg-picker__btn bg-picker__btn--dusk" data-bg="dusk" type="button" aria-label="黄昏" title="黄昏"></button>
+              <button class="bg-picker__btn bg-picker__btn--space" data-bg="space" type="button" aria-label="星空" title="星空"></button>
+              <button class="bg-picker__btn bg-picker__btn--snow" data-bg="snow" type="button" aria-label="雪景" title="雪景"></button>
+            </div>
             <div class="mode-buttons">
               <button id="btn-map" class="big-btn map-entry-btn" type="button" aria-label="成长地图">
                 <span class="btn-emoji" aria-hidden="true">🌳</span>
@@ -563,6 +572,7 @@
   <!-- Scripts are loaded with `defer` so they execute in order after
        HTML parsing is done, without blocking the initial paint. -->
   <script src="js/utils.js" defer></script>
+  <script src="js/sprites.js" defer></script>
   <script src="js/sound.js" defer></script>
   <script src="js/api.js" defer></script>
   <script src="js/tts.js" defer></script>

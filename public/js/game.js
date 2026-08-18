@@ -331,6 +331,12 @@
           Math.max(1.1, this.currentLevel.monsterSpeed || 1.2),
           1.8
         )];
+        // Boss HP: 5 hp per hit, scaled so higher-level bosses are tougher.
+        // Each correct vocabulary answer chips 1 HP; the essay translation
+        // is the finishing blow after HP reaches 0.
+        const bossHP = Math.min(10, Math.max(3, Math.floor((this.currentLevel.monsterHP || 90) / 18)));
+        this.monsters[0].hp = bossHP;
+        this.monsters[0].maxHp = bossHP;
         this._nudgeAwayFromPlayer(this.monsters);
       } else {
         this.monsters = eligible.length > 0
@@ -439,7 +445,7 @@
       document.getElementById('level-intro-goal').textContent = isReview
         ? `复习 ${cfg.target} 个易错单词 (${cfg.timeLimit}秒)`
         : cfg.isBoss
-          ? `翻译一篇中文小作文，击败 Boss！(${cfg.timeLimit}秒)`
+          ? `答对单词削减 Boss 血量，最后翻译小作文致命一击！(${cfg.timeLimit}秒)`
           : `难度 d${cfg.difficulty} · 捕获 ${cfg.target} 只小怪 (${cfg.timeLimit}秒)`;
       Utils.playBeep(cfg.isBoss ? 'boss' : 'click');
       this.showScreen('screen-level-intro');
@@ -692,7 +698,7 @@
           m.hitPending = false;
           m.startCapture();
           const screen = this._worldToScreen(m.x, m.y);
-          this.fx.burst(screen.x, screen.y, '✨', 10);
+          this.fx.burst(screen.x, screen.y, '✨', 10, 'sparkle');
         }
         this.mpCounts.set(msg.by, msg.captured != null ? msg.captured : (this.mpCounts.get(msg.by) || 0) + 1);
         if (msg.by === this.myNetId) {
@@ -1154,8 +1160,10 @@
 
     // Pop the vocabulary question for a monster hit by a bullet. Correct =
     // capture + rewards; wrong = monster counterattacks and player loses HP.
-    // Boss duels (solo) swap the question for a Chinese→English translation
-    // of a ~50-char essay; one correct translation defeats the boss.
+    // Boss duels: while the boss still has HP, hitting it pops a regular
+    // vocabulary question — each correct answer chips HP away. Only once HP
+    // is depleted does the essay translation appear as the finishing blow;
+    // a correct translation then defeats the boss.
     async _engageMonster(m) {
       if (!m || !m.alive || m.captured || !m.word || m.isEngaged) return;
       m.isEngaged = true;
@@ -1164,7 +1172,7 @@
       this.paused = true;
       this.state = GameState.PAUSED_QUESTION;
       let result;
-      if (m.boss && !this.netMode && window.Essays && window.Essay) {
+      if (m.boss && !this.netMode && window.Essays && window.Essay && m.hp <= 0) {
         const essay = Essays.makeEssay((this.currentLevel && this.currentLevel.world) || 1);
         result = await Essay.show(essay);
         result.type = 'translate';
@@ -1188,32 +1196,61 @@
       }
 
       if (result.correct) {
-        m.startCapture();
-        this.combo += 1;
-        this.maxCombo = Math.max(this.maxCombo, this.combo);
-        if (this.combo >= 3 && this.combo % 3 === 0) Utils.playBeep('combo', { combo: this.combo });
-        const basePts = 100;
-        const comboBonus = Math.floor(this.combo * 20);
-        const pts = basePts + comboBonus;
-        this.score += pts;
-        this.captured += 1;
-        // Drop coins (bounce off the real ground)
-        for (let i = 0; i < 3; i++) {
-          this.coinList.push(new Coin(
-            m.x + Utils.randInt(-20, 20),
-            m.y + Utils.randInt(-10, 10),
-            10,
-            this.world.groundY
-          ));
-        }
-        const screen = this._worldToScreen(m.x, m.y);
-        this.fx.burst(screen.x, screen.y, '✨', 10);
-        this.fx.burst(screen.x, screen.y, '💥', 4);
-        Utils.playBeep('catch');
-        Utils.toast('+' + pts + (comboBonus ? ' (Combo x' + this.combo + ')' : ''));
+        if (m.boss && result.type !== 'translate') {
+          // Correct vocabulary answer chips boss HP — the boss survives
+          // until HP is depleted, then the essay translation finishes it.
+          this.combo += 1;
+          this.maxCombo = Math.max(this.maxCombo, this.combo);
+          if (this.combo >= 3 && this.combo % 3 === 0) Utils.playBeep('combo', { combo: this.combo });
+          const basePts = 100;
+          const comboBonus = Math.floor(this.combo * 20);
+          const pts = basePts + comboBonus;
+          this.score += pts;
+          const alive = m.takeDamage(1);
+          const screen = this._worldToScreen(m.x, m.y);
+          this.fx.burst(screen.x, screen.y, '💥', 6, 'fire');
+          this.fx.burst(screen.x, screen.y, '⚡', 4, 'thunder');
+          Utils.playBeep('hit');
+          Utils.shake(this.canvas, 8, 250);
+          if (alive) {
+            Utils.toast('+' + pts + '  Boss HP ' + m.hp + '/' + m.maxHp);
+          } else {
+            Utils.toast('💀 Boss 血量耗尽！再击中一次完成翻译致命一击！');
+          }
+          // Knock back the boss so it doesn't sit on top of the player
+          const dx = m.x - this.player.x;
+          const dy = m.y - this.player.y;
+          const mag = Math.hypot(dx, dy) || 1;
+          m.x += (dx / mag) * 40;
+          m.y += (dy / mag) * 40;
+        } else {
+          m.startCapture();
+          this.combo += 1;
+          this.maxCombo = Math.max(this.maxCombo, this.combo);
+          if (this.combo >= 3 && this.combo % 3 === 0) Utils.playBeep('combo', { combo: this.combo });
+          const basePts = 100;
+          const comboBonus = Math.floor(this.combo * 20);
+          const pts = basePts + comboBonus;
+          this.score += pts;
+          this.captured += 1;
+          // Drop coins (bounce off the real ground)
+          for (let i = 0; i < 3; i++) {
+            this.coinList.push(new Coin(
+              m.x + Utils.randInt(-20, 20),
+              m.y + Utils.randInt(-10, 10),
+              10,
+              this.world.groundY
+            ));
+          }
+          const screen = this._worldToScreen(m.x, m.y);
+          this.fx.burst(screen.x, screen.y, '✨', 10, 'sparkle');
+          this.fx.burst(screen.x, screen.y, '💥', 4, 'fire');
+          Utils.playBeep('catch');
+          Utils.toast('+' + pts + (comboBonus ? ' (Combo x' + this.combo + ')' : ''));
 
-        if (this.captured >= this.currentLevel.target) {
-          this._scheduleEndLevel(true, 600);
+          if (this.captured >= this.currentLevel.target) {
+            this._scheduleEndLevel(true, 600);
+          }
         }
       } else {
         // Wrong answer: monster survives and counterattacks.
@@ -1242,7 +1279,7 @@
         // Shield absorbs the hit: visual ping, no damage.
         if (sx !== undefined && sy !== undefined) {
           const s = this._worldToScreen(sx, sy);
-          this.fx.burst(s.x, s.y, '🛡️', 6);
+          this.fx.burst(s.x, s.y, '🛡️', 6, 'shield');
         }
         return;
       }
@@ -1258,7 +1295,7 @@
       Utils.shake(this.canvas, 12, 350);
       if (sx !== undefined && sy !== undefined) {
         const s = this._worldToScreen(sx, sy);
-        this.fx.burst(s.x, s.y, '💥', 6);
+        this.fx.burst(s.x, s.y, '💥', 6, 'fire');
       }
       this.fx.burst(this.viewW / 2, this.viewH / 2, '💢', 6);
       this._updateHUD();
@@ -1434,7 +1471,7 @@
           break;
         case 'guard-shield':
           this.shieldTime = 6000;
-          this.fx.burst(this.viewW / 2, this.viewH / 2, '🛡️', 10);
+          this.fx.burst(this.viewW / 2, this.viewH / 2, '🛡️', 10, 'shield');
           consumed = true;
           break;
         case 'time-hourglass':
@@ -1444,7 +1481,7 @@
           break;
         case 'stun-bomb':
           for (const m of this.monsters) m.stunned = 4000;
-          this.fx.burst(this.viewW / 2, this.viewH / 2, '💥', 14);
+          this.fx.burst(this.viewW / 2, this.viewH / 2, '💥', 14, 'fire');
           consumed = true;
           break;
         default:

@@ -58,13 +58,13 @@ html, body {
   position: fixed;
   inset: 0;
   overflow: hidden;
-  /* Animated GIF background (public/img/bg.gif) sits behind the transparent
-     game canvas. Keep a dark fallback color underneath in case the image
-     hasn't loaded yet. */
+  /* Background image is set via CSS custom property so the player can
+     switch between different themes. The fallback is the animated GIF. */
+  --bg: url('../img/bg.gif');
   background-color: #0a0a1a;
-  background-image: url('../img/bg.gif');
-  /* Stretch to the full viewport so the entire GIF (top to bottom) shows as
-     a panorama with no cropping / letterbox bars. */
+  background-image: var(--bg);
+  /* Stretch to the full viewport so the entire background (top to bottom)
+     shows as a panorama with no cropping / letterbox bars. */
   background-size: 100% 100%;
   background-position: center;
   background-repeat: no-repeat;
@@ -2199,6 +2199,59 @@ html, body {
   background: rgba(40, 18, 8, 0.5);
   border-color: rgba(255, 200, 120, 0.3);
   color: #ffd700;
+}
+
+/* Background picker */
+.bg-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2px 0;
+}
+.bg-picker__label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.bg-picker__btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+  background-size: cover;
+  background-position: center;
+  transition: border-color 0.2s, transform 0.15s;
+  flex-shrink: 0;
+}
+.bg-picker__btn:hover {
+  border-color: rgba(255,255,255,0.6);
+  transform: scale(1.15);
+}
+.bg-picker__btn--active {
+  border-color: var(--c-gold);
+  box-shadow: 0 0 8px rgba(255,215,0,0.5);
+}
+.bg-picker__btn--default {
+  background-image: url('../img/bg.gif');
+}
+.bg-picker__btn--forest {
+  background-image: url('../img/bg_forest.png');
+}
+.bg-picker__btn--ocean {
+  background-image: url('../img/bg_ocean.png');
+}
+.bg-picker__btn--dusk {
+  background-image: url('../img/bg_dusk.png');
+}
+.bg-picker__btn--space {
+  background-image: url('../img/bg_space.png');
+}
+.bg-picker__btn--snow {
+  background-image: url('../img/bg_snow.png');
 }
 
 .user-status { margin: 0; }

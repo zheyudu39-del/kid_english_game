@@ -1,0 +1,14 @@
+{
+  "size": 32,
+  "map": {
+    "thunder": 0,
+    "fire": 32,
+    "sparkle": 64,
+    "star": 96,
+    "shield": 128,
+    "dizzy": 160,
+    "crown": 192,
+    "skull": 224,
+    "lock": 256
+  }
+}

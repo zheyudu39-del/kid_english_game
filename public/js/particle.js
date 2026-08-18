@@ -47,7 +47,7 @@
       }
     }
 
-    burst(x, y, emoji, count = 8) {
+    burst(x, y, emoji, count = 8, spriteName) {
       for (let i = 0; i < count; i++) {
         const angle = Utils.randFloat(0, Math.PI * 2);
         const sp = Utils.randFloat(2, 5);
@@ -60,7 +60,8 @@
           size: Utils.randFloat(20, 32),
           color: '',
           gravity: 0.1,
-          emoji
+          emoji,
+          sprite: spriteName || null  // optional sprite sheet name
         });
       }
     }
@@ -86,7 +87,9 @@
       ctx.clearRect(0, 0, this.w, this.h);
       for (const p of this.particles) {
         const alpha = 1 - (p.life / p.maxLife);
-        if (p.emoji) {
+        if (p.sprite && window.Sprites && Sprites.draw(ctx, p.sprite, p.x, p.y, { size: p.size, alpha })) {
+          // Pixel-art sprite particle (drawn via Sprites.draw)
+        } else if (p.emoji) {
           ctx.globalAlpha = alpha;
           ctx.font = `${p.size}px serif`;
           ctx.textAlign = 'center';

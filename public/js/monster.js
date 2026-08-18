@@ -53,6 +53,9 @@
       // a bad config can never make a monster cover the whole arena.
       this.scale = Math.max(0.8, Math.min(1.8, Number(scale) || 1));
       this.boss = this.scale >= 1.2;
+      this.hp = this.boss ? 5 : 0;       // boss HP: must answer vocab questions to deplete
+      this.maxHp = this.hp;
+      this.hpFlash = 0;                  // ms remaining for white flash on damage
       this.dir = { x: Utils.randFloat(-1, 1), y: Utils.randFloat(-1, 1) };
       this.normalize();
       this.bodyColor = Utils.randItem(BODY_COLORS);
@@ -106,6 +109,9 @@
         this.stunned -= dt;
         return;
       }
+
+      // Boss HP flash countdown
+      if (this.hpFlash > 0) this.hpFlash -= dt;
 
       // Attack cooldowns tick down regardless of AI state.
       if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -177,6 +183,19 @@
       return { x: this.x, y: this.y, w: this.hitbox, h: this.hitbox };
     }
 
+    // Boss HP: reduce by 1 per correct answer. Returns true if the boss
+    // is still alive (HP > 0), false if HP just reached 0.
+    takeDamage(amount) {
+      if (!this.boss || this.captured) return false;
+      this.hp = Math.max(0, this.hp - (amount || 1));
+      this.hpFlash = 200; // 200ms white flash
+      return this.hp > 0;
+    }
+
+    get isDead() {
+      return this.boss && this.hp <= 0;
+    }
+
     // ---- combat helpers (driven by game.js) ----
     // Attack cadence is intentionally brisk (melee every 0.5s, ranged every
     // 0.8s) to keep kids dodging; the 1.5s player invulnerability window is
@@ -204,11 +223,16 @@
 
         // Sparkles
         if (Math.floor(t * 10) % 2 === 0) {
-          ctx.font = '24px serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('✨', this.x - 12, this.y - 8);
-          ctx.fillText('💫', this.x + 12, this.y + 8);
+          if (window.Sprites && Sprites.isReady()) {
+            Sprites.draw(ctx, 'sparkle', this.x - 12, this.y - 8, { size: 24 });
+            Sprites.draw(ctx, 'star', this.x + 12, this.y + 8, { size: 24 });
+          } else {
+            ctx.font = '24px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('✨', this.x - 12, this.y - 8);
+            ctx.fillText('💫', this.x + 12, this.y + 8);
+          }
         }
       } else {
         // (No ghostly float — the vector body below sits grounded on its
@@ -224,7 +248,14 @@
       // Boss aura: pulsing ring so boss monsters read instantly.
       if (this.boss) {
         const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 260);
-        ctx.strokeStyle = 'rgba(255, 71, 87, ' + (0.35 + 0.3 * pulse).toFixed(2) + ')';
+        let auraColor;
+        if (this.hp <= 0) {
+          // Vulnerable state: golden aura — boss is ready for the finishing blow.
+          auraColor = 'rgba(255, 215, 0, ' + (0.4 + 0.35 * pulse).toFixed(2) + ')';
+        } else {
+          auraColor = 'rgba(255, 71, 87, ' + (0.35 + 0.3 * pulse).toFixed(2) + ')';
+        }
+        ctx.strokeStyle = auraColor;
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.ellipse(this.x, this.y - 2, this.size * 0.72, this.size * 0.62, 0, 0, Math.PI * 2);
@@ -233,6 +264,15 @@
 
       // Solid vector body (outlined creature, no emoji)
       this._drawBody(ctx);
+
+      // Damage flash: white overlay on the body
+      if (this.hpFlash > 0) {
+        const flashAlpha = Math.min(0.5, this.hpFlash / 200 * 0.5);
+        ctx.fillStyle = 'rgba(255,255,255,' + flashAlpha.toFixed(2) + ')';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y - 2 * (SIZE / 44) * this.scale, 20 * (SIZE / 44) * this.scale, 17 * (SIZE / 44) * this.scale, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // Word label below — hidden while the player is answering a question
       // so the English word isn't visible through the modal backdrop (which
@@ -270,26 +310,78 @@
       // Locked by another hunter's question (versus mode): stand-by mark
       // so everyone can see it's taken.
       if (this.netLocked != null) {
-        ctx.font = '16px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🔒', this.x - 14, this.y - 22);
+        if (window.Sprites && Sprites.isReady()) {
+          Sprites.draw(ctx, 'lock', this.x - 14, this.y - 22, { size: 18 });
+        } else {
+          ctx.font = '16px serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('🔒', this.x - 14, this.y - 22);
+        }
       }
 
-      // Crown above boss monsters (after body so it sits on top).
-      if (this.boss) {
-        ctx.font = Math.round(16 * this.scale) + 'px serif';
+      // Boss HP bar — rendered below the crown so HP is visible at a glance.
+      if (this.boss && !this.captured && this.maxHp > 0) {
+        const barW = this.size * 1.2;
+        const barH = 6 * this.scale;
+        const barY = this.y - this.size * 0.62 - 26;
+        const barX = this.x - barW / 2;
+        const ratio = this.hp / this.maxHp;
+        // Background track
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.beginPath();
+        ctx.roundRect(barX - 1, barY - 1, barW + 2, barH + 2, 3);
+        ctx.fill();
+        // HP fill — color shifts from green → yellow → red as HP drops
+        let hpColor;
+        if (ratio > 0.5) {
+          hpColor = `rgb(${Math.round(255*(1-ratio)*2)}, 220, 60)`;
+        } else {
+          hpColor = `rgb(255, ${Math.round(220*ratio*2)}, 60)`;
+        }
+        ctx.fillStyle = hpColor;
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW * ratio, barH, 2);
+        ctx.fill();
+        // HP text
+        ctx.font = `bold ${Math.round(10 * this.scale)}px "Nunito", system-ui, sans-serif`;
+        ctx.fillStyle = '#fff';
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText('👑', this.x, this.y - this.size * 0.62 - 4);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.hp + '/' + this.maxHp, this.x, barY + barH / 2);
+      }
+
+// Crown above boss monsters (after body so it sits on top).
+      if (this.boss) {
+        if (window.Sprites && Sprites.isReady()) {
+          Sprites.draw(ctx, 'crown', this.x, this.y - this.size * 0.62 - 4, { size: Math.round(18 * this.scale) });
+        } else {
+          ctx.font = Math.round(16 * this.scale) + 'px serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText('👑', this.x, this.y - this.size * 0.62 - 4);
+        }
+        // Skull when HP is depleted — "finish him!"
+        if (this.hp <= 0) {
+          if (window.Sprites && Sprites.isReady()) {
+            Sprites.draw(ctx, 'skull', this.x, this.y - this.size * 0.62 - 22, { size: Math.round(16 * this.scale) });
+          } else {
+            ctx.font = Math.round(14 * this.scale) + 'px serif';
+            ctx.fillText('💀', this.x, this.y - this.size * 0.62 - 22);
+          }
+        }
       }
 
       // Stun indicator
       if (this.stunned > 0) {
-        ctx.font = '18px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('💫', this.x, this.y - 24);
+        if (window.Sprites && Sprites.isReady()) {
+          Sprites.draw(ctx, 'dizzy', this.x, this.y - 24, { size: 20 });
+        } else {
+          ctx.font = '18px serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('💫', this.x, this.y - 24);
+        }
       }
 
       ctx.restore();

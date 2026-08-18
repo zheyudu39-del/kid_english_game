@@ -97,56 +97,11 @@
     }
 
     render(ctx) {
-      // Background: the animated GIF is a CSS layer behind the (transparent)
-      // canvas — see #game-root / #game-canvas in game.css. We paint nothing
-      // opaque here (no sky, no ground, no trees) so the GIF shows as a full
-      // panorama. A single very light veil keeps particles / coins / monsters
-      // readable against a bright GIF without covering it up.
+      // Background: the animated GIF / PNG is a CSS layer behind the
+      // transparent canvas. A single very light veil keeps game objects
+      // readable against a bright background without covering it up.
       ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
       ctx.fillRect(0, 0, this.width, this.height);
-
-      // Particles (theme-specific)
-      if (this.def.particles === 'leaves') {
-        for (const p of this.leafPositions) {
-          ctx.fillStyle = p.color;
-          ctx.beginPath();
-          ctx.ellipse(p.x, p.y, p.size/2, p.size/3, Math.PI/4, 0, Math.PI*2);
-          ctx.fill();
-        }
-      } else if (this.def.particles === 'snow' || this.def.particles === 'stars') {
-        ctx.fillStyle = '#fff';
-        for (const p of this.bubblePositions) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size/4, 0, Math.PI*2);
-          ctx.fill();
-        }
-      } else if (this.def.particles === 'bubbles') {
-        for (const p of this.bubblePositions) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size/2, 0, Math.PI*2);
-          ctx.stroke();
-          ctx.fillStyle = 'rgba(255,255,255,0.15)';
-          ctx.fill();
-        }
-      } else if (this.def.particles === 'embers') {
-        // Embers: each particle owns a stable color (set in _initDecorations)
-        // so they don't flicker every frame.
-        for (const p of this.bubblePositions) {
-          ctx.fillStyle = p.color || `hsl(${Utils.randInt(10, 40)}, 100%, 50%)`;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size/4, 0, Math.PI*2);
-          ctx.fill();
-        }
-      } else if (this.def.particles === 'sand') {
-        for (const p of this.bubblePositions) {
-          ctx.fillStyle = 'rgba(255, 220, 150, 0.3)';
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size/3, 0, Math.PI*2);
-          ctx.fill();
-        }
-      }
 
       // HUD area gradient overlay (top)
       const overlay = ctx.createLinearGradient(0, 0, 0, 100);

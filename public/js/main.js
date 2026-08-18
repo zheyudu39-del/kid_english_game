@@ -12,6 +12,10 @@
   const game = new Game();
   window._game = game;  // for debugging
 
+  // Kick off pixel-art sprite loading early — emoji fallback covers the
+  // (brief) window before the sheet arrives.
+  if (window.Sprites) Sprites.load().catch(() => {});
+
   // ---- Title screen wiring ----
   const nameInput = document.getElementById('player-name');
   const startBtn = document.getElementById('btn-start');
@@ -293,4 +297,44 @@
   // profile is loaded (after login, after register, or after restore).
   document.addEventListener('wordhunter:session-restored', updateStartButton);
   document.addEventListener('wordhunter:session-cleared', updateStartButton);
+
+  // ---- Background picker ----
+  const BG_KEY = 'wordhunter:bg';
+  const BG_MAP = {
+    default: "url('../img/bg.gif')",
+    forest:  "url('../img/bg_forest.png')",
+    ocean:   "url('../img/bg_ocean.png')",
+    dusk:    "url('../img/bg_dusk.png')",
+    space:   "url('../img/bg_space.png')",
+    snow:    "url('../img/bg_snow.png')"
+  };
+  const root = document.getElementById('game-root');
+  const picker = document.getElementById('bg-picker');
+
+  function applyBg(name) {
+    const url = BG_MAP[name] || BG_MAP.default;
+    root.style.setProperty('--bg', url);
+    // Update active state on buttons
+    if (picker) {
+      picker.querySelectorAll('.bg-picker__btn').forEach(b => {
+        b.classList.toggle('bg-picker__btn--active', b.dataset.bg === name);
+      });
+    }
+    try { localStorage.setItem(BG_KEY, name); } catch (e) { /* quota */ }
+  }
+
+  if (picker) {
+    // Restore saved preference
+    let saved = null;
+    try { saved = localStorage.getItem(BG_KEY); } catch (e) { /* */ }
+    if (saved && BG_MAP[saved]) applyBg(saved);
+
+    // Wire click events
+    picker.querySelectorAll('.bg-picker__btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.bg;
+        if (name) applyBg(name);
+      });
+    });
+  }
 })();
